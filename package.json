@@ -1,6 +1,6 @@
 {
-  "name": "jay-invest-v2",
-  "version": "2.0.0",
+  "name": "jay-invest-v3-1",
+  "version": "3.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
