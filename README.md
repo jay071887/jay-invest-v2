@@ -1,3 +1,25 @@
-import './globals.css';
-export const metadata={title:'Jay Invest',description:'股票、黃金與大盤回檔追蹤'};
-export default function RootLayout({children}){return <html lang="zh-Hant"><body>{children}</body></html>}
+# Jay Invest v2
+
+## 已完成
+- 自動抓取臺灣證券交易所 MIS 股票行情與加權指數。
+- 自動抓取臺灣銀行黃金牌價頁面，估算一台兩黃金條塊買進價。
+- 每 5 分鐘重新整理，計算股票與黃金每日變化。
+- 大盤距離高點 -10%、-20%、-30% 加碼提醒。
+- 開啟網站時自動保存每日資產快照，顯示近 90 天曲線。
+- 支援瀏覽器通知（需允許通知）。
+
+## 本機測試
+1. 安裝 Node.js 20 以上。
+2. 在資料夾開啟終端機。
+3. 執行 `npm install`。
+4. 執行 `npm run dev`。
+5. 瀏覽器開啟 `http://localhost:3000`。
+
+## Vercel
+把整個資料夾上傳 GitHub，Vercel Import 後直接 Deploy。
+
+## 限制
+- TWSE MIS 與臺銀網頁若改版，資料解析可能需要更新。
+- 黃金每日損益使用這台裝置前一日記錄的臺銀價格；若某天完全未開網站，就不會留下該日基準。
+- 大盤高點第一次建議手動輸入，之後若出現新高會自動上修。
+- 個人資料目前存在瀏覽器 localStorage，尚未雲端同步。
