@@ -1,27 +1,37 @@
-# Jay Invest v3.1
+# Jay Invest v3.2 Cloud
 
-這是可直接部署到 Vercel 的核心資產版。
+## 本版完成
+- Supabase Email/密碼登入
+- Google 登入按鈕（需在 Supabase 啟用 Google Provider）
+- 手機、電腦、平板雲端同步
+- v3.1 LocalStorage 資料首次登入自動搬到雲端
+- 持股、現金、預備金、黃金、大盤高點、資產快照全部同步
+- 投資現金與緊急預備金重新命名，避免混淆
+- Supabase RLS：每個帳號只能讀寫自己的資料
+- 原有股票、大盤、黃金、加碼提醒功能保留
 
-## 新增功能
-- 多檔台股持股：新增、修改、刪除
-- 每檔自動計算市值、今日損益、總損益、報酬率
-- 黃金雙來源自動抓取
-- 黃金抓取失敗時自動使用手動備援價，不再阻斷整個頁面
-- 加權指數 -10%、-20%、-30% 加碼提醒
-- 可標記「已執行」，避免重複提醒
-- 自動保存每日資產快照，保留 365 天
-- 現金、預備金、黃金與資產目標可自行修改
+## 更新方法
+1. 解壓縮本 ZIP。
+2. 將內容覆蓋到 GitHub Desktop 的 jay-invest-v2 本機資料夾。
+3. GitHub Desktop：
+   - Summary：Upgrade to Jay Invest v3.2 Cloud
+   - Commit to main
+   - Push origin
+4. Vercel 自動部署。
 
-## 更新既有 GitHub 專案
-將壓縮包內下列項目覆蓋到 Repository 根目錄：
-- app
-- package.json
-- README.md
+## 第一次使用
+1. 網站打開後點「第一次使用？建立帳號」。
+2. 使用 Email + 至少 6 碼密碼註冊。
+3. 若 Supabase Email Confirmation 開啟，請到信箱點確認。
+4. 手機與電腦使用同一組 Email / 密碼登入。
+5. 第一次登入會自動尋找此裝置的 v3.1 資料並搬到雲端。
 
-Commit 後 Vercel 會自動重新部署。
+## Google 登入
+Google 按鈕已寫入，但 Supabase 尚需設定 Google OAuth：
+Authentication → Providers → Google。
+在設定完成前，Email 登入可立即使用。
 
-## 黃金備援
-如果首頁顯示黃金改用手動備援：
-1. 展開「其他設定」
-2. 在「黃金手動備援價（每兩）」輸入銀樓或臺銀的一兩買進價
-3. 網站立即依該價格計算市值
+## 安全
+- 專案只使用 Publishable Key。
+- 不包含 Secret Key 或 service_role key。
+- user_data 已開啟 RLS，每位使用者只能存取自己的資料。

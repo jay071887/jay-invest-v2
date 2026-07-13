@@ -2,9 +2,9 @@ import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-function num(value) {
-  const n = Number(String(value ?? "").replaceAll(",", ""));
-  return Number.isFinite(n) ? n : 0;
+function toNumber(value) {
+  const number = Number(String(value ?? "").replaceAll(",", ""));
+  return Number.isFinite(number) ? number : 0;
 }
 
 export async function GET(request) {
@@ -37,21 +37,19 @@ export async function GET(request) {
     });
 
     if (!response.ok) throw new Error(`TWSE HTTP ${response.status}`);
+
     const data = await response.json();
     const rows = Array.isArray(data.msgArray) ? data.msgArray : [];
 
     const stocks = symbols.map((symbol) => {
       const row = rows.find((item) => item.c === symbol);
+
       if (!row) {
-        return {
-          symbol,
-          ok: false,
-          error: "找不到行情"
-        };
+        return { symbol, ok: false, error: "找不到行情" };
       }
 
-      const price = num(row.z) || num(row.y);
-      const previousClose = num(row.y);
+      const price = toNumber(row.z) || toNumber(row.y);
+      const previousClose = toNumber(row.y);
 
       return {
         symbol,
@@ -70,8 +68,8 @@ export async function GET(request) {
       (row) => row.ch === "t00.tw" || row.c === "t00"
     );
 
-    const indexPrice = index ? (num(index.z) || num(index.y)) : 0;
-    const indexPrevious = index ? num(index.y) : 0;
+    const indexPrice = index ? (toNumber(index.z) || toNumber(index.y)) : 0;
+    const indexPrevious = index ? toNumber(index.y) : 0;
 
     return NextResponse.json({
       ok: true,

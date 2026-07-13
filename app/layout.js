@@ -2,7 +2,7 @@ import "./globals.css";
 
 export const metadata = {
   title: "Jay Invest",
-  description: "個人資產、股票、黃金與大盤加碼追蹤"
+  description: "雲端同步資產管理"
 };
 
 export default function RootLayout({ children }) {

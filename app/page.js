@@ -1,18 +1,27 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { supabase } from "../lib/supabase";
 
-const DEFAULT_HOLDINGS = [
-  { id: crypto.randomUUID(), symbol: "009816", shares: 0, averageCost: 0 }
-];
-
-const DEFAULT_SETTINGS = {
-  cash: 150000,
-  reserve: 250000,
-  goldTael: 2.1,
-  manualGoldTaelPrice: 0,
-  taiexHigh: 0,
-  goal: 3000000
+const DEFAULT_DATA = {
+  holdings: [
+    {
+      id: "default-009816",
+      symbol: "009816",
+      shares: 0,
+      averageCost: 0
+    }
+  ],
+  settings: {
+    investmentCash: 150000,
+    emergencyFund: 250000,
+    goldTael: 2.1,
+    manualGoldTaelPrice: 0,
+    taiexHigh: 0,
+    goal: 3000000
+  },
+  snapshots: [],
+  executedTier: ""
 };
 
 const money = (value) =>
@@ -23,48 +32,187 @@ const money = (value) =>
   }).format(Number(value) || 0);
 
 const signedMoney = (value) => {
-  const number = Number(value) || 0;
-  return `${number > 0 ? "+" : ""}${money(number)}`;
+  const n = Number(value) || 0;
+  return `${n > 0 ? "+" : ""}${money(n)}`;
 };
 
+function cloneDefaultData() {
+  return JSON.parse(JSON.stringify(DEFAULT_DATA));
+}
+
 export default function Home() {
-  const [holdings, setHoldings] = useState(DEFAULT_HOLDINGS);
-  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const [session, setSession] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [cloudLoading, setCloudLoading] = useState(false);
+  const [cloudStatus, setCloudStatus] = useState("尚未登入");
+  const [data, setData] = useState(cloneDefaultData());
   const [market, setMarket] = useState({ stocks: [], taiex: {} });
   const [gold, setGold] = useState(null);
   const [goldBase, setGoldBase] = useState(null);
-  const [snapshots, setSnapshots] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState("準備完成");
-  const [executedTier, setExecutedTier] = useState("");
+  const [marketLoading, setMarketLoading] = useState(false);
+  const saveTimer = useRef(null);
+  const hydrated = useRef(false);
 
   useEffect(() => {
-    const savedHoldings = localStorage.getItem("jay31-holdings");
-    const savedSettings = localStorage.getItem("jay31-settings");
-    const savedSnapshots = localStorage.getItem("jay31-snapshots");
-    const savedGoldBase = localStorage.getItem("jay31-gold-base");
-    const savedExecuted = localStorage.getItem("jay31-executed-tier");
+    supabase.auth.getSession().then(({ data: authData }) => {
+      setSession(authData.session);
+      setAuthLoading(false);
+    });
 
-    if (savedHoldings) setHoldings(JSON.parse(savedHoldings));
-    if (savedSettings) setSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(savedSettings) });
-    if (savedSnapshots) setSnapshots(JSON.parse(savedSnapshots));
-    if (savedGoldBase) setGoldBase(JSON.parse(savedGoldBase));
-    if (savedExecuted) setExecutedTier(savedExecuted);
+    const {
+      data: { subscription }
+    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      setAuthLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
   useEffect(() => {
-    if (!holdings.length) return;
-    refreshAll();
-    const timer = setInterval(refreshAll, 5 * 60 * 1000);
+    if (!session?.user?.id) {
+      hydrated.current = false;
+      return;
+    }
+
+    loadCloudData(session.user.id);
+  }, [session?.user?.id]);
+
+  useEffect(() => {
+    if (!session?.user?.id || !hydrated.current) return;
+
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      saveCloudData(session.user.id, data);
+    }, 700);
+
+    return () => clearTimeout(saveTimer.current);
+  }, [data, session?.user?.id]);
+
+  useEffect(() => {
+    if (!session?.user?.id || !data.holdings.length) return;
+
+    refreshMarketData();
+    const timer = setInterval(refreshMarketData, 5 * 60 * 1000);
+
     return () => clearInterval(timer);
-  }, [holdings.map((item) => item.symbol).join(",")]);
+  }, [
+    session?.user?.id,
+    data.holdings.map((holding) => holding.symbol).join(",")
+  ]);
 
-  async function refreshAll() {
-    setLoading(true);
-    setStatus("正在更新股票、大盤與黃金…");
+  async function loadCloudData(userId) {
+    setCloudLoading(true);
+    setCloudStatus("正在下載雲端資料…");
 
-    const symbols = holdings
-      .map((item) => item.symbol.trim())
+    const { data: row, error } = await supabase
+      .from("user_data")
+      .select("data")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (error) {
+      setCloudStatus(`雲端讀取失敗：${error.message}`);
+      setCloudLoading(false);
+      return;
+    }
+
+    if (row?.data) {
+      setData({
+        ...cloneDefaultData(),
+        ...row.data,
+        settings: {
+          ...cloneDefaultData().settings,
+          ...(row.data.settings || {})
+        }
+      });
+      setCloudStatus("已從雲端同步");
+    } else {
+      const migrated = migrateLocalV31();
+      const initialData = migrated || cloneDefaultData();
+
+      setData(initialData);
+
+      const { error: insertError } = await supabase
+        .from("user_data")
+        .upsert(
+          {
+            user_id: userId,
+            data: initialData,
+            updated_at: new Date().toISOString()
+          },
+          { onConflict: "user_id" }
+        );
+
+      setCloudStatus(
+        insertError
+          ? `首次雲端建立失敗：${insertError.message}`
+          : migrated
+          ? "已將此裝置 v3.1 資料搬到雲端"
+          : "已建立新的雲端資料"
+      );
+    }
+
+    hydrated.current = true;
+    setCloudLoading(false);
+  }
+
+  function migrateLocalV31() {
+    try {
+      const holdings = localStorage.getItem("jay31-holdings");
+      const settings = localStorage.getItem("jay31-settings");
+      const snapshots = localStorage.getItem("jay31-snapshots");
+      const executedTier = localStorage.getItem("jay31-executed-tier");
+
+      if (!holdings && !settings && !snapshots) return null;
+
+      return {
+        holdings: holdings
+          ? JSON.parse(holdings)
+          : cloneDefaultData().holdings,
+        settings: settings
+          ? {
+              ...cloneDefaultData().settings,
+              ...JSON.parse(settings)
+            }
+          : cloneDefaultData().settings,
+        snapshots: snapshots ? JSON.parse(snapshots) : [],
+        executedTier: executedTier || ""
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  async function saveCloudData(userId, nextData) {
+    setCloudStatus("正在儲存…");
+
+    const { error } = await supabase
+      .from("user_data")
+      .upsert(
+        {
+          user_id: userId,
+          data: nextData,
+          updated_at: new Date().toISOString()
+        },
+        { onConflict: "user_id" }
+      );
+
+    setCloudStatus(
+      error
+        ? `雲端儲存失敗：${error.message}`
+        : `已同步 ${new Date().toLocaleTimeString("zh-TW", {
+            hour: "2-digit",
+            minute: "2-digit"
+          })}`
+    );
+  }
+
+  async function refreshMarketData() {
+    setMarketLoading(true);
+
+    const symbols = data.holdings
+      .map((holding) => holding.symbol.trim())
       .filter(Boolean)
       .join(",");
 
@@ -72,48 +220,42 @@ export default function Home() {
       fetch(`/api/market?symbols=${encodeURIComponent(symbols)}`, {
         cache: "no-store"
       }).then((response) => response.json()),
-      fetch("/api/gold", { cache: "no-store" }).then((response) => response.json())
+      fetch("/api/gold", { cache: "no-store" }).then((response) =>
+        response.json()
+      )
     ]);
-
-    const messages = [];
 
     if (marketResult.status === "fulfilled" && marketResult.value.ok) {
       setMarket(marketResult.value);
+
       const currentIndex = marketResult.value.taiex?.price || 0;
       if (currentIndex) {
-        setSettings((current) => {
-          const next = {
-            ...current,
-            taiexHigh: Math.max(Number(current.taiexHigh) || 0, currentIndex)
-          };
-          localStorage.setItem("jay31-settings", JSON.stringify(next));
-          return next;
-        });
+        setData((current) => ({
+          ...current,
+          settings: {
+            ...current.settings,
+            taiexHigh: Math.max(
+              Number(current.settings.taiexHigh) || 0,
+              currentIndex
+            )
+          }
+        }));
       }
-      messages.push("股票與大盤成功");
-    } else {
-      messages.push(`股票或大盤失敗：${marketResult.value?.error || "未知錯誤"}`);
     }
 
     if (goldResult.status === "fulfilled" && goldResult.value.ok) {
       setGold(goldResult.value);
       updateGoldBase(goldResult.value.taelBuy);
-      messages.push(`黃金成功（${goldResult.value.source}）`);
     } else {
       setGold(null);
-      messages.push("黃金改用手動備援");
     }
 
-    setStatus(`${messages.join("｜")}｜${new Date().toLocaleTimeString("zh-TW", {
-      hour: "2-digit",
-      minute: "2-digit"
-    })}`);
-    setLoading(false);
+    setMarketLoading(false);
   }
 
   function updateGoldBase(price) {
     const today = new Date().toISOString().slice(0, 10);
-    const saved = localStorage.getItem("jay31-gold-base");
+    const saved = localStorage.getItem("jay32-gold-base");
     const base = saved ? JSON.parse(saved) : null;
 
     let next;
@@ -125,29 +267,20 @@ export default function Home() {
       next = { ...base, current: price };
     }
 
-    localStorage.setItem("jay31-gold-base", JSON.stringify(next));
+    localStorage.setItem("jay32-gold-base", JSON.stringify(next));
     setGoldBase(next);
   }
 
-  function saveHoldings(next) {
-    setHoldings(next);
-    localStorage.setItem("jay31-holdings", JSON.stringify(next));
-  }
-
-  function saveSettings(next) {
-    setSettings(next);
-    localStorage.setItem("jay31-settings", JSON.stringify(next));
-  }
-
   const computed = useMemo(() => {
-    const marketMap = Object.fromEntries(
-      (market.stocks || []).map((item) => [item.symbol, item])
+    const quoteMap = Object.fromEntries(
+      (market.stocks || []).map((quote) => [quote.symbol, quote])
     );
 
-    const rows = holdings.map((holding) => {
-      const quote = marketMap[holding.symbol] || {};
+    const holdings = data.holdings.map((holding) => {
+      const quote = quoteMap[holding.symbol] || {};
       const price = quote.price || 0;
       const previousClose = quote.previousClose || price;
+
       const marketValue = Number(holding.shares) * price;
       const dailyPnl =
         Number(holding.shares) * (price - previousClose);
@@ -159,43 +292,54 @@ export default function Home() {
         ...holding,
         name: quote.name || holding.symbol,
         price,
-        previousClose,
         marketValue,
         dailyPnl,
         totalPnl,
         returnPct:
           holding.averageCost > 0
             ? ((price / Number(holding.averageCost)) - 1) * 100
-            : 0,
-        quoteOk: quote.ok !== false
+            : 0
       };
     });
 
-    const stockValue = rows.reduce((sum, item) => sum + item.marketValue, 0);
-    const stockDaily = rows.reduce((sum, item) => sum + item.dailyPnl, 0);
-    const stockTotal = rows.reduce((sum, item) => sum + item.totalPnl, 0);
+    const stockValue = holdings.reduce(
+      (sum, holding) => sum + holding.marketValue,
+      0
+    );
+    const stockDaily = holdings.reduce(
+      (sum, holding) => sum + holding.dailyPnl,
+      0
+    );
+    const stockTotal = holdings.reduce(
+      (sum, holding) => sum + holding.totalPnl,
+      0
+    );
 
-    const automaticGold = gold?.taelBuy || 0;
+    const automaticGoldPrice = gold?.taelBuy || 0;
     const goldTaelPrice =
-      automaticGold || Number(settings.manualGoldTaelPrice) || 0;
+      automaticGoldPrice ||
+      Number(data.settings.manualGoldTaelPrice) ||
+      0;
     const goldPrevious = goldBase?.previous || goldTaelPrice;
-    const goldValue = Number(settings.goldTael) * goldTaelPrice;
-    const goldDaily = Number(settings.goldTael) * (goldTaelPrice - goldPrevious);
+    const goldValue =
+      Number(data.settings.goldTael) * goldTaelPrice;
+    const goldDaily =
+      Number(data.settings.goldTael) *
+      (goldTaelPrice - goldPrevious);
 
     const totalAsset =
-      Number(settings.cash) +
-      Number(settings.reserve) +
+      Number(data.settings.investmentCash) +
+      Number(data.settings.emergencyFund) +
       stockValue +
       goldValue;
 
     const taiex = market.taiex?.price || 0;
-    const high = Number(settings.taiexHigh) || taiex;
-    const drawdown = high > 0 && taiex > 0
-      ? ((taiex / high) - 1) * 100
-      : 0;
+    const high = Number(data.settings.taiexHigh) || taiex;
+    const drawdown =
+      high > 0 && taiex > 0 ? ((taiex / high) - 1) * 100 : 0;
 
     return {
-      rows,
+      holdings,
       stockValue,
       stockDaily,
       stockTotal,
@@ -203,37 +347,71 @@ export default function Home() {
       goldValue,
       goldDaily,
       totalAsset,
-      drawdown,
-      dailyTotal: stockDaily + goldDaily
+      dailyTotal: stockDaily + goldDaily,
+      drawdown
     };
-  }, [holdings, settings, market, gold, goldBase]);
+  }, [data, market, gold, goldBase]);
 
   useEffect(() => {
-    if (!computed.totalAsset) return;
-    const today = new Date().toISOString().slice(0, 10);
-    const next = [
-      ...snapshots.filter((item) => item.date !== today),
-      {
-        date: today,
-        total: computed.totalAsset,
-        stocks: computed.stockValue,
-        gold: computed.goldValue,
-        cash: Number(settings.cash),
-        reserve: Number(settings.reserve)
-      }
-    ].slice(-365);
+    if (!hydrated.current || !computed.totalAsset) return;
 
-    setSnapshots(next);
-    localStorage.setItem("jay31-snapshots", JSON.stringify(next));
+    const today = new Date().toISOString().slice(0, 10);
+
+    setData((current) => {
+      const existing = current.snapshots || [];
+      const previousToday = existing.find((item) => item.date === today);
+
+      if (
+        previousToday &&
+        Math.round(previousToday.total) ===
+          Math.round(computed.totalAsset)
+      ) {
+        return current;
+      }
+
+      return {
+        ...current,
+        snapshots: [
+          ...existing.filter((item) => item.date !== today),
+          {
+            date: today,
+            total: computed.totalAsset,
+            stocks: computed.stockValue,
+            gold: computed.goldValue,
+            investmentCash: Number(
+              current.settings.investmentCash
+            ),
+            emergencyFund: Number(
+              current.settings.emergencyFund
+            )
+          }
+        ].slice(-365)
+      };
+    });
   }, [computed.totalAsset]);
 
   const advice =
     computed.drawdown <= -30
-      ? { tier: "-30%", title: "第三次加碼", amount: 150000, tone: "red" }
+      ? {
+          tier: "-30%",
+          title: "第三次加碼",
+          amount: 150000,
+          tone: "red"
+        }
       : computed.drawdown <= -20
-      ? { tier: "-20%", title: "第二次加碼", amount: 100000, tone: "orange" }
+      ? {
+          tier: "-20%",
+          title: "第二次加碼",
+          amount: 100000,
+          tone: "orange"
+        }
       : computed.drawdown <= -10
-      ? { tier: "-10%", title: "第一次加碼", amount: 50000, tone: "green" }
+      ? {
+          tier: "-10%",
+          title: "第一次加碼",
+          amount: 50000,
+          tone: "green"
+        }
       : {
           tier: "",
           title: "今天不用額外操作",
@@ -241,15 +419,16 @@ export default function Home() {
           tone: "blue"
         };
 
-  function markExecuted() {
-    if (!advice.tier) return;
-    setExecutedTier(advice.tier);
-    localStorage.setItem("jay31-executed-tier", advice.tier);
+  if (authLoading) {
+    return (
+      <main className="center">
+        <div className="card">正在檢查登入狀態…</div>
+      </main>
+    );
   }
 
-  function resetExecuted() {
-    setExecutedTier("");
-    localStorage.removeItem("jay31-executed-tier");
+  if (!session) {
+    return <LoginScreen />;
   }
 
   return (
@@ -257,12 +436,29 @@ export default function Home() {
       <header className="topbar">
         <div>
           <h1>Jay Invest</h1>
-          <p>v3.1 核心資產版</p>
+          <p>v3.2 雲端同步版</p>
         </div>
-        <button className="refresh" onClick={refreshAll} disabled={loading}>
-          {loading ? "更新中" : "更新"}
-        </button>
+        <div className="topActions">
+          <button
+            className="refresh"
+            onClick={refreshMarketData}
+            disabled={marketLoading}
+          >
+            {marketLoading ? "更新中" : "更新行情"}
+          </button>
+          <button
+            className="ghostButton"
+            onClick={() => supabase.auth.signOut()}
+          >
+            登出
+          </button>
+        </div>
       </header>
+
+      <div className="syncBar">
+        <span>{session.user.email}</span>
+        <b>{cloudLoading ? "同步中…" : cloudStatus}</b>
+      </div>
 
       <section className="hero card">
         <span>總資產</span>
@@ -278,14 +474,21 @@ export default function Home() {
             style={{
               width: `${Math.min(
                 100,
-                computed.totalAsset / Number(settings.goal) * 100
+                computed.totalAsset /
+                  Number(data.settings.goal) *
+                  100
               )}%`
             }}
           />
         </div>
         <small>
-          {money(settings.goal)} 目標：
-          {(computed.totalAsset / Number(settings.goal) * 100).toFixed(1)}%
+          {money(data.settings.goal)} 目標：
+          {(
+            computed.totalAsset /
+            Number(data.settings.goal) *
+            100
+          ).toFixed(1)}
+          %
         </small>
       </section>
 
@@ -294,13 +497,13 @@ export default function Home() {
           label="股票今日損益"
           value={signedMoney(computed.stockDaily)}
           tone={computed.stockDaily}
-          note={`${holdings.length} 檔持股`}
+          note={`${data.holdings.length} 檔持股`}
         />
         <Metric
           label="黃金今日損益"
           value={signedMoney(computed.goldDaily)}
           tone={computed.goldDaily}
-          note={`${settings.goldTael} 兩`}
+          note={`${data.settings.goldTael} 兩`}
         />
       </section>
 
@@ -311,21 +514,29 @@ export default function Home() {
         </div>
         <div className="adviceText">
           <b>
-            {executedTier === advice.tier && advice.tier
+            {data.executedTier === advice.tier && advice.tier
               ? `${advice.title}已執行`
               : advice.title}
           </b>
           <span>
-            {advice.amount ? money(advice.amount) : "照計畫定期定額"}
+            {advice.amount
+              ? money(advice.amount)
+              : "照計畫定期定額"}
           </span>
-          {advice.tier && executedTier !== advice.tier && (
-            <button onClick={markExecuted}>標記已執行</button>
-          )}
-          {executedTier && (
-            <button className="ghost" onClick={resetExecuted}>
-              重設提醒
-            </button>
-          )}
+
+          {advice.tier &&
+            data.executedTier !== advice.tier && (
+              <button
+                onClick={() =>
+                  setData((current) => ({
+                    ...current,
+                    executedTier: advice.tier
+                  }))
+                }
+              >
+                標記已執行
+              </button>
+            )}
         </div>
       </section>
 
@@ -342,8 +553,14 @@ export default function Home() {
           label="黃金每兩參考價"
           value={money(computed.goldTaelPrice)}
         />
-        <Row label="現金" value={money(settings.cash)} />
-        <Row label="預備金" value={money(settings.reserve)} />
+        <Row
+          label="投資現金"
+          value={money(data.settings.investmentCash)}
+        />
+        <Row
+          label="緊急預備金"
+          value={money(data.settings.emergencyFund)}
+        />
       </section>
 
       <section className="card">
@@ -352,32 +569,42 @@ export default function Home() {
           <button
             className="smallButton"
             onClick={() =>
-              saveHoldings([
-                ...holdings,
-                {
-                  id: crypto.randomUUID(),
-                  symbol: "",
-                  shares: 0,
-                  averageCost: 0
-                }
-              ])
+              setData((current) => ({
+                ...current,
+                holdings: [
+                  ...current.holdings,
+                  {
+                    id: crypto.randomUUID(),
+                    symbol: "",
+                    shares: 0,
+                    averageCost: 0
+                  }
+                ]
+              }))
             }
           >
             新增
           </button>
         </div>
 
-        {computed.rows.map((holding, index) => (
+        {computed.holdings.map((holding, index) => (
           <article className="holding" key={holding.id}>
             <div className="holdingTop">
               <div>
                 <b>{holding.name || "新持股"}</b>
-                <small>{holding.symbol || "尚未填寫代號"}</small>
+                <small>
+                  {holding.symbol || "尚未填寫代號"}
+                </small>
               </div>
               <button
                 className="delete"
                 onClick={() =>
-                  saveHoldings(holdings.filter((item) => item.id !== holding.id))
+                  setData((current) => ({
+                    ...current,
+                    holdings: current.holdings.filter(
+                      (item) => item.id !== holding.id
+                    )
+                  }))
                 }
               >
                 刪除
@@ -390,30 +617,32 @@ export default function Home() {
                 <input
                   value={holding.symbol}
                   onChange={(event) => {
-                    const next = [...holdings];
+                    const next = [...data.holdings];
                     next[index] = {
                       ...next[index],
                       symbol: event.target.value.trim()
                     };
-                    saveHoldings(next);
+                    setData({ ...data, holdings: next });
                   }}
                 />
               </label>
+
               <label>
                 股數
                 <input
                   type="number"
                   value={holding.shares}
                   onChange={(event) => {
-                    const next = [...holdings];
+                    const next = [...data.holdings];
                     next[index] = {
                       ...next[index],
                       shares: Number(event.target.value)
                     };
-                    saveHoldings(next);
+                    setData({ ...data, holdings: next });
                   }}
                 />
               </label>
+
               <label>
                 平均成本
                 <input
@@ -421,23 +650,31 @@ export default function Home() {
                   step="0.01"
                   value={holding.averageCost}
                   onChange={(event) => {
-                    const next = [...holdings];
+                    const next = [...data.holdings];
                     next[index] = {
                       ...next[index],
                       averageCost: Number(event.target.value)
                     };
-                    saveHoldings(next);
+                    setData({ ...data, holdings: next });
                   }}
                 />
               </label>
+
               <div className="quoteBox">
                 <span>現價</span>
-                <b>{holding.price ? holding.price.toFixed(2) : "--"}</b>
+                <b>
+                  {holding.price
+                    ? holding.price.toFixed(2)
+                    : "--"}
+                </b>
               </div>
             </div>
 
             <div className="holdingStats">
-              <Row label="市值" value={money(holding.marketValue)} />
+              <Row
+                label="市值"
+                value={money(holding.marketValue)}
+              />
               <Row
                 label="今日損益"
                 value={signedMoney(holding.dailyPnl)}
@@ -460,67 +697,105 @@ export default function Home() {
 
       <section className="card">
         <h2>資產成長</h2>
-        <MiniChart data={snapshots} />
-        <small>每日開啟網站時自動保留一筆，最多保存 365 天。</small>
+        <MiniChart data={data.snapshots || []} />
+        <small>
+          資產快照已改存 Supabase，手機與電腦共用。
+        </small>
       </section>
 
       <details className="card settings">
         <summary>其他設定</summary>
+
         <Field
-          label="現金"
+          label="投資現金"
           type="number"
-          value={settings.cash}
+          value={data.settings.investmentCash}
           onChange={(value) =>
-            saveSettings({ ...settings, cash: Number(value) })
+            setData({
+              ...data,
+              settings: {
+                ...data.settings,
+                investmentCash: Number(value)
+              }
+            })
           }
         />
+
         <Field
-          label="預備金"
+          label="緊急預備金"
           type="number"
-          value={settings.reserve}
+          value={data.settings.emergencyFund}
           onChange={(value) =>
-            saveSettings({ ...settings, reserve: Number(value) })
+            setData({
+              ...data,
+              settings: {
+                ...data.settings,
+                emergencyFund: Number(value)
+              }
+            })
           }
         />
+
         <Field
           label="黃金持有（兩）"
           type="number"
           step="0.1"
-          value={settings.goldTael}
+          value={data.settings.goldTael}
           onChange={(value) =>
-            saveSettings({ ...settings, goldTael: Number(value) })
-          }
-        />
-        <Field
-          label="黃金手動備援價（每兩）"
-          type="number"
-          value={settings.manualGoldTaelPrice}
-          onChange={(value) =>
-            saveSettings({
-              ...settings,
-              manualGoldTaelPrice: Number(value)
+            setData({
+              ...data,
+              settings: {
+                ...data.settings,
+                goldTael: Number(value)
+              }
             })
           }
         />
+
+        <Field
+          label="黃金手動備援價（每兩）"
+          type="number"
+          value={data.settings.manualGoldTaelPrice}
+          onChange={(value) =>
+            setData({
+              ...data,
+              settings: {
+                ...data.settings,
+                manualGoldTaelPrice: Number(value)
+              }
+            })
+          }
+        />
+
         <Field
           label="加權指數參考高點"
           type="number"
-          value={settings.taiexHigh}
+          value={data.settings.taiexHigh}
           onChange={(value) =>
-            saveSettings({ ...settings, taiexHigh: Number(value) })
+            setData({
+              ...data,
+              settings: {
+                ...data.settings,
+                taiexHigh: Number(value)
+              }
+            })
           }
         />
+
         <Field
           label="資產目標"
           type="number"
-          value={settings.goal}
+          value={data.settings.goal}
           onChange={(value) =>
-            saveSettings({ ...settings, goal: Number(value) })
+            setData({
+              ...data,
+              settings: {
+                ...data.settings,
+                goal: Number(value)
+              }
+            })
           }
         />
-        <p className="hint">
-          黃金自動來源失效時，系統會直接使用手動備援價，不再讓整個資產頁面報錯。
-        </p>
       </details>
 
       <section className="card plan">
@@ -529,10 +804,133 @@ export default function Home() {
         <div>14 日　NT$4,000</div>
         <div>21 日　NT$4,000</div>
         <div>28 日　NT$4,000</div>
-        <small>每月合計 NT$16,000，其餘資金保留現金。</small>
+        <small>
+          每月合計 NT$16,000，其餘資金保留現金。
+        </small>
       </section>
+    </main>
+  );
+}
 
-      <footer>{status}</footer>
+function LoginScreen() {
+  const [mode, setMode] = useState("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function submit(event) {
+    event.preventDefault();
+    setBusy(true);
+    setMessage("");
+
+    const result =
+      mode === "signup"
+        ? await supabase.auth.signUp({ email, password })
+        : await supabase.auth.signInWithPassword({
+            email,
+            password
+          });
+
+    if (result.error) {
+      setMessage(result.error.message);
+    } else if (mode === "signup" && !result.data.session) {
+      setMessage("註冊完成，請到信箱點確認連結後再登入。");
+    } else {
+      setMessage("登入成功");
+    }
+
+    setBusy(false);
+  }
+
+  async function loginWithGoogle() {
+    setBusy(true);
+
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: window.location.origin
+      }
+    });
+
+    if (error) {
+      setMessage(
+        "Google 登入尚未啟用，可先使用 Email 註冊登入。"
+      );
+      setBusy(false);
+    }
+  }
+
+  return (
+    <main className="loginPage">
+      <section className="loginCard">
+        <h1>Jay Invest</h1>
+        <p>登入後，手機與電腦會共用同一份資料。</p>
+
+        <button
+          className="googleButton"
+          onClick={loginWithGoogle}
+          disabled={busy}
+        >
+          使用 Google 登入
+        </button>
+
+        <div className="divider">
+          <span>或使用 Email</span>
+        </div>
+
+        <form onSubmit={submit}>
+          <label>
+            Email
+            <input
+              type="email"
+              required
+              value={email}
+              onChange={(event) =>
+                setEmail(event.target.value)
+              }
+            />
+          </label>
+
+          <label>
+            密碼（至少 6 碼）
+            <input
+              type="password"
+              minLength={6}
+              required
+              value={password}
+              onChange={(event) =>
+                setPassword(event.target.value)
+              }
+            />
+          </label>
+
+          <button
+            className="loginButton"
+            type="submit"
+            disabled={busy}
+          >
+            {busy
+              ? "處理中…"
+              : mode === "signup"
+              ? "建立帳號"
+              : "登入"}
+          </button>
+        </form>
+
+        <button
+          className="switchMode"
+          onClick={() =>
+            setMode(mode === "signup" ? "login" : "signup")
+          }
+        >
+          {mode === "signup"
+            ? "已有帳號？切換登入"
+            : "第一次使用？建立帳號"}
+        </button>
+
+        {message && <div className="authMessage">{message}</div>}
+      </section>
     </main>
   );
 }
@@ -541,7 +939,9 @@ function Metric({ label, value, tone, note }) {
   return (
     <article className="card metric">
       <span>{label}</span>
-      <strong className={tone >= 0 ? "up" : "down"}>{value}</strong>
+      <strong className={tone >= 0 ? "up" : "down"}>
+        {value}
+      </strong>
       <small>{note}</small>
     </article>
   );
@@ -551,14 +951,24 @@ function Row({ label, value, tone }) {
   return (
     <div className="row">
       <span>{label}</span>
-      <b className={tone === undefined ? "" : tone >= 0 ? "up" : "down"}>
+      <b
+        className={
+          tone === undefined ? "" : tone >= 0 ? "up" : "down"
+        }
+      >
         {value}
       </b>
     </div>
   );
 }
 
-function Field({ label, value, onChange, type = "text", step }) {
+function Field({
+  label,
+  value,
+  onChange,
+  type = "text",
+  step
+}) {
   return (
     <label>
       <span>{label}</span>
@@ -574,22 +984,33 @@ function Field({ label, value, onChange, type = "text", step }) {
 
 function MiniChart({ data }) {
   if (!data || data.length < 2) {
-    return <div className="empty">累積兩天資料後顯示資產曲線。</div>;
+    return (
+      <div className="empty">
+        累積兩天雲端資料後顯示資產曲線。
+      </div>
+    );
   }
 
   const values = data.map((item) => item.total);
   const min = Math.min(...values);
   const max = Math.max(...values);
+
   const points = data
     .map((item, index) => {
       const x = (index / (data.length - 1)) * 100;
-      const y = 92 - ((item.total - min) / Math.max(1, max - min)) * 84;
+      const y =
+        92 -
+        ((item.total - min) / Math.max(1, max - min)) * 84;
       return `${x},${y}`;
     })
     .join(" ");
 
   return (
-    <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="chart">
+    <svg
+      viewBox="0 0 100 100"
+      preserveAspectRatio="none"
+      className="chart"
+    >
       <polyline
         points={points}
         fill="none"

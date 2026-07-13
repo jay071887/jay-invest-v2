@@ -1,6 +1,6 @@
 {
-  "name": "jay-invest-v3-1",
-  "version": "3.1.0",
+  "name": "jay-invest-v3-2-cloud",
+  "version": "3.2.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -10,6 +10,7 @@
   "dependencies": {
     "next": "16.2.6",
     "react": "19.2.6",
-    "react-dom": "19.2.6"
+    "react-dom": "19.2.6",
+    "@supabase/supabase-js": "latest"
   }
 }
