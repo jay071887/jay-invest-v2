@@ -83,3 +83,36 @@ input{width:100%;margin-top:6px;padding:12px;border:1px solid var(--line);border
   .topActions{flex-direction:column}
   .syncBar{flex-direction:column}
 }
+
+
+/* Strategy center */
+.modeBadge{
+  display:inline-flex;align-items:center;padding:7px 10px;border-radius:999px;
+  background:#122b1a;color:var(--green);font-size:12px;font-weight:750
+}
+.strategyToggle{
+  position:relative;display:flex!important;align-items:center;justify-content:space-between;
+  gap:14px;padding:14px 0;border-bottom:1px solid var(--line);cursor:pointer
+}
+.strategyToggle>div{padding-right:56px}
+.strategyToggle b{display:block;color:var(--text);font-size:15px}
+.strategyToggle small{margin-top:4px;line-height:1.45}
+.strategyToggle input{
+  position:absolute;opacity:0;width:1px;height:1px;pointer-events:none
+}
+.strategyToggle .switch{
+  position:absolute;right:0;width:46px;height:27px;border-radius:999px;
+  background:#3a3a43;transition:.2s
+}
+.strategyToggle .switch:after{
+  content:"";position:absolute;top:3px;left:3px;width:21px;height:21px;
+  border-radius:50%;background:white;transition:.2s
+}
+.strategyToggle input:checked + .switch{background:var(--green)}
+.strategyToggle input:checked + .switch:after{transform:translateX(19px)}
+.strategySummary{
+  margin-top:15px;padding:14px;border-radius:15px;background:#101015;
+  border:1px solid var(--line)
+}
+.strategySummary b,.strategySummary span{display:block}
+.strategySummary span{margin-top:6px;color:var(--muted);font-size:13px;line-height:1.55}

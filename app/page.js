@@ -21,7 +21,15 @@ const DEFAULT_DATA = {
     goal: 3000000
   },
   snapshots: [],
-  executedTier: ""
+  executedTier: "",
+  strategies: {
+    recurring009816: true,
+    marketDrawdownReminder: true,
+    leveragedEtf: false,
+    goldBuying: false,
+    emergencyFund: true,
+    investmentJournal: true
+  }
 };
 
 const money = (value) =>
@@ -124,6 +132,10 @@ export default function Home() {
         settings: {
           ...cloneDefaultData().settings,
           ...(row.data.settings || {})
+        },
+        strategies: {
+          ...cloneDefaultData().strategies,
+          ...(row.data.strategies || {})
         }
       });
       setCloudStatus("已從雲端同步");
@@ -177,7 +189,8 @@ export default function Home() {
             }
           : cloneDefaultData().settings,
         snapshots: snapshots ? JSON.parse(snapshots) : [],
-        executedTier: executedTier || ""
+        executedTier: executedTier || "",
+        strategies: cloneDefaultData().strategies
       };
     } catch {
       return null;
@@ -390,25 +403,40 @@ export default function Home() {
     });
   }, [computed.totalAsset]);
 
+  const strategy = {
+    ...cloneDefaultData().strategies,
+    ...(data.strategies || {})
+  };
+
+  const drawdownEnabled = strategy.marketDrawdownReminder;
+  const leveragedEnabled = strategy.leveragedEtf;
+
   const advice =
-    computed.drawdown <= -30
+    !drawdownEnabled
+      ? {
+          tier: "",
+          title: "大盤回檔提醒已關閉",
+          amount: 0,
+          tone: "blue"
+        }
+      : computed.drawdown <= -30
       ? {
           tier: "-30%",
-          title: "第三次加碼",
+          title: leveragedEnabled ? "正2 第三次加碼" : "大盤第三次加碼提醒",
           amount: 150000,
           tone: "red"
         }
       : computed.drawdown <= -20
       ? {
           tier: "-20%",
-          title: "第二次加碼",
+          title: leveragedEnabled ? "正2 第二次加碼" : "大盤第二次加碼提醒",
           amount: 100000,
           tone: "orange"
         }
       : computed.drawdown <= -10
       ? {
           tier: "-10%",
-          title: "第一次加碼",
+          title: leveragedEnabled ? "正2 第一次加碼" : "大盤第一次加碼提醒",
           amount: 50000,
           tone: "green"
         }
@@ -798,6 +826,122 @@ export default function Home() {
         />
       </details>
 
+      <section className="card">
+        <div className="sectionHeader">
+          <div>
+            <h2>策略中心</h2>
+            <small>只顯示目前正在執行的策略。</small>
+          </div>
+          <span className="modeBadge">穩定累積</span>
+        </div>
+
+        <StrategyToggle
+          label="009816 定期定額"
+          description="每月 7、14、21、28 日各 NT$4,000"
+          checked={strategy.recurring009816}
+          onChange={(checked) =>
+            setData({
+              ...data,
+              strategies: {
+                ...strategy,
+                recurring009816: checked
+              }
+            })
+          }
+        />
+
+        <StrategyToggle
+          label="大盤 -10% / -20% / -30% 回檔提醒"
+          description="保留大盤提醒，但不等於一定要買正2"
+          checked={strategy.marketDrawdownReminder}
+          onChange={(checked) =>
+            setData({
+              ...data,
+              strategies: {
+                ...strategy,
+                marketDrawdownReminder: checked
+              }
+            })
+          }
+        />
+
+        <StrategyToggle
+          label="正2 加碼策略"
+          description="目前關閉；重新勾選後才顯示正2加碼語句"
+          checked={strategy.leveragedEtf}
+          onChange={(checked) =>
+            setData({
+              ...data,
+              strategies: {
+                ...strategy,
+                leveragedEtf: checked
+              }
+            })
+          }
+        />
+
+        <StrategyToggle
+          label="黃金持續買進"
+          description="目前關閉；維持既有 2.1 兩，不主動新增"
+          checked={strategy.goldBuying}
+          onChange={(checked) =>
+            setData({
+              ...data,
+              strategies: {
+                ...strategy,
+                goldBuying: checked
+              }
+            })
+          }
+        />
+
+        <StrategyToggle
+          label="緊急預備金管理"
+          description="維持 20～30 萬安全緩衝"
+          checked={strategy.emergencyFund}
+          onChange={(checked) =>
+            setData({
+              ...data,
+              strategies: {
+                ...strategy,
+                emergencyFund: checked
+              }
+            })
+          }
+        />
+
+        <StrategyToggle
+          label="投資日誌"
+          description="保留未來的操作與決策紀錄模組"
+          checked={strategy.investmentJournal}
+          onChange={(checked) =>
+            setData({
+              ...data,
+              strategies: {
+                ...strategy,
+                investmentJournal: checked
+              }
+            })
+          }
+        />
+
+        <div className="strategySummary">
+          <b>目前策略</b>
+          <span>
+            {strategy.recurring009816
+              ? "009816 固定投入；"
+              : "009816 定期定額暫停；"}
+            {strategy.goldBuying
+              ? "黃金買進開啟；"
+              : "黃金維持持有、不新增；"}
+            {strategy.leveragedEtf
+              ? "正2策略開啟。"
+              : "正2策略暫停。"}
+          </span>
+        </div>
+      </section>
+
+      {strategy.recurring009816 && (
       <section className="card plan">
         <h2>009816 定期定額</h2>
         <div>7 日　NT$4,000</div>
@@ -808,6 +952,7 @@ export default function Home() {
           每月合計 NT$16,000，其餘資金保留現金。
         </small>
       </section>
+      )}
     </main>
   );
 }
@@ -826,7 +971,13 @@ function LoginScreen() {
 
     const result =
       mode === "signup"
-        ? await supabase.auth.signUp({ email, password })
+        ? await supabase.auth.signUp({
+            email,
+            password,
+            options: {
+              emailRedirectTo: window.location.origin
+            }
+          })
         : await supabase.auth.signInWithPassword({
             email,
             password
@@ -932,6 +1083,28 @@ function LoginScreen() {
         {message && <div className="authMessage">{message}</div>}
       </section>
     </main>
+  );
+}
+
+function StrategyToggle({
+  label,
+  description,
+  checked,
+  onChange
+}) {
+  return (
+    <label className="strategyToggle">
+      <div>
+        <b>{label}</b>
+        <small>{description}</small>
+      </div>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      <span className="switch" aria-hidden="true" />
+    </label>
   );
 }
 

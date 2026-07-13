@@ -1,6 +1,6 @@
 {
-  "name": "jay-invest-v3-2-cloud",
-  "version": "3.2.0",
+  "name": "jay-invest-v3-3-strategy",
+  "version": "3.3.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
