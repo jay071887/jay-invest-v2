@@ -85,6 +85,18 @@ const readMinutes = (score) => {
   return 0;
 };
 
+const decisionStatusText = (status) => {
+  if (status === "red") return "建議立即注意";
+  if (status === "yellow") return "值得關注";
+  return "維持原策略";
+};
+
+const decisionActionText = (status) => {
+  if (status === "red") return "建議重新評估";
+  if (status === "yellow") return "目前不用調整";
+  return "今天不需要變動";
+};
+
 function cloneDefaultData() {
   return JSON.parse(JSON.stringify(DEFAULT_DATA));
 }
@@ -1069,6 +1081,63 @@ export default function Home() {
     }))
     .sort((a, b) => b.score - a.score);
 
+
+  const officialEvents = events.filter(
+    (event) => event.source_type === "official"
+  );
+  const reliableMediaEvents = events.filter(
+    (event) => event.source_type === "reliable_media"
+  );
+  const conflictingEvents = events.filter(
+    (event) => event.has_conflict === true
+  );
+  const directImpactEvents = events.filter(
+    (event) => getPortfolioImpact(event).score >= 80
+  );
+  const highPriorityEvents = events.filter(
+    (event) => Number(event.score) >= 80
+  );
+
+  const decisionConfidence = Math.max(
+    35,
+    Math.min(
+      99,
+      Math.round(
+        45 +
+          officialEvents.length * 8 +
+          reliableMediaEvents.length * 4 +
+          directImpactEvents.length * 3 -
+          conflictingEvents.length * 12
+      )
+    )
+  );
+
+  const decisionReasons = [
+    officialEvents.length > 0
+      ? `有 ${officialEvents.length} 件官方資料`
+      : "目前沒有新的官方重大公告",
+    directImpactEvents.length > 0
+      ? `有 ${directImpactEvents.length} 件直接影響持股`
+      : "沒有事件直接改變目前持股策略",
+    highPriorityEvents.length > 0
+      ? `有 ${highPriorityEvents.length} 件高重要事件`
+      : "沒有高重要事件",
+    conflictingEvents.length > 0
+      ? "部分來源互相矛盾，建議等待官方資訊"
+      : "目前沒有偵測到來源衝突"
+  ];
+
+  const topDecisionEvents = [...events]
+    .sort((a, b) => {
+      const aImpact = getPortfolioImpact(a).score;
+      const bImpact = getPortfolioImpact(b).score;
+      return (
+        Number(b.score) + bImpact -
+        (Number(a.score) + aImpact)
+      );
+    })
+    .slice(0, 3);
+
   if (authLoading) {
     return (
       <main className="center">
@@ -1086,7 +1155,7 @@ export default function Home() {
       <header className="topbar">
         <div>
           <h1>Jay Invest</h1>
-          <p>V5 Alpha 2.2・Complete Event Cards</p>
+          <p>V5 Alpha 2.3・Decision First</p>
         </div>
         <div className="topActions">
           <button
@@ -1110,29 +1179,113 @@ export default function Home() {
         <b>{cloudLoading ? "同步中…" : cloudStatus}</b>
       </div>
 
-      <section className={`card commandCenter ${decisionSummary.status}`}>
-        <div className="commandTop">
+      <section className={`card decisionHero ${decisionSummary.status}`}>
+        <div className="decisionHeader">
           <div>
-            <span>V5 今日決策</span>
-            <h2>{decisionSummary.title}</h2>
-            <p>{decisionSummary.reason}</p>
+            <span className="eyebrow">AI 今日決策</span>
+            <h2>{decisionActionText(decisionSummary.status)}</h2>
+            <p>{decisionSummary.title}</p>
           </div>
-          <div className="minutesBox">
-            <strong>{decisionSummary.minutes}</strong>
-            <small>分鐘</small>
+
+          <div className={`decisionLight ${decisionSummary.status}`}>
+            <span />
+            <b>{decisionStatusText(decisionSummary.status)}</b>
           </div>
         </div>
-        <div className="commandMeta">
-          <span>事件數：{events.length}</span>
+
+        <div className="decisionMain">
+          <div className="decisionAnswer">
+            <span>今天需要變動嗎？</span>
+            <strong>
+              {decisionSummary.status === "red"
+                ? "需要重新檢視"
+                : "不需要"}
+            </strong>
+            <p>{decisionSummary.reason}</p>
+          </div>
+
+          <div className="decisionStats">
+            <div>
+              <span>建議閱讀時間</span>
+              <b>{decisionSummary.minutes} 分鐘</b>
+            </div>
+            <div>
+              <span>AI 今日信心</span>
+              <b>{decisionConfidence}%</b>
+            </div>
+            <div>
+              <span>直接影響持股</span>
+              <b>{directImpactEvents.length} 件</b>
+            </div>
+            <div>
+              <span>高重要事件</span>
+              <b>{highPriorityEvents.length} 件</b>
+            </div>
+          </div>
+        </div>
+
+        <div className="decisionReasons">
+          <b>判斷理由</b>
+          <div className="reasonGrid">
+            {decisionReasons.map((reason, index) => (
+              <span key={index}>✓ {reason}</span>
+            ))}
+          </div>
+        </div>
+
+        <div className="strategyReminder">
+          <b>你的目前策略</b>
           <span>
-            未讀：{events.filter((event) => !event.is_read).length}
+            {strategyForDecision.recurring009816
+              ? "009816 定期投入持續；"
+              : "009816 定期投入暫停；"}
+            {strategyForDecision.goldBuying
+              ? "黃金買進開啟；"
+              : "黃金維持持有、不新增；"}
+            {strategyForDecision.leveragedEtf
+              ? "正2策略開啟。"
+              : "正2策略暫停。"}
+          </span>
+        </div>
+
+        {topDecisionEvents.length > 0 && (
+          <div className="topDecisionEvents">
+            <div className="sectionHeader compact">
+              <div>
+                <h3>最值得先看的事件</h3>
+                <small>依事件重要性與對投資組合影響排序。</small>
+              </div>
+            </div>
+
+            {topDecisionEvents.map((event, index) => {
+              const impact = getPortfolioImpact(event);
+              return (
+                <div className="decisionEventRow" key={event.id}>
+                  <span className="decisionRank">{index + 1}</span>
+                  <div>
+                    <b>{event.symbol || "市場"}・{event.title}</b>
+                    <small>
+                      重要分數 {event.score}｜{impact.label}｜
+                      {event.source_name || "未知來源"}
+                    </small>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <div className="decisionFooter">
+          <span>
+            更新時間：
+            {new Date().toLocaleString("zh-TW")}
           </span>
           <button
             className="textButton"
             onClick={() => loadEvents(session.user.id)}
             disabled={eventsLoading}
           >
-            {eventsLoading ? "更新中" : "更新事件"}
+            {eventsLoading ? "更新中" : "重新分析"}
           </button>
         </div>
       </section>

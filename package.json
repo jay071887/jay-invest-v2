@@ -1,6 +1,6 @@
 {
-  "name": "jay-invest-v5-alpha2-2-complete-event-cards",
-  "version": "5.0.0-alpha.2.2",
+  "name": "jay-invest-v5-alpha2-3-decision-first",
+  "version": "5.0.0-alpha.2.3",
   "private": true,
   "scripts": {
     "dev": "next dev",
