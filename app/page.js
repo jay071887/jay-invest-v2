@@ -2,6 +2,12 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
+import {
+  buildWatchScore,
+  normalizeEvent
+} from "../lib/engine/eventEngine";
+import { buildDecisionSummary } from "../lib/engine/decisionEngine";
+import { evaluateStrategyImpact } from "../lib/engine/strategyEngine";
 
 const DEFAULT_DATA = {
   holdings: [
@@ -61,6 +67,19 @@ export default function Home() {
   const [gold, setGold] = useState(null);
   const [goldBase, setGoldBase] = useState(null);
   const [marketLoading, setMarketLoading] = useState(false);
+  const [events, setEvents] = useState([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
+  const [eventMessage, setEventMessage] = useState("");
+  const [newEvent, setNewEvent] = useState({
+    symbol: "",
+    event_type: "material_announcement",
+    title: "",
+    summary: "",
+    source_name: "手動建立",
+    source_type: "official",
+    score: 90,
+    confidence: 100
+  });
   const [trade, setTrade] = useState({
     symbol: "009816",
     shares: 0,
@@ -94,6 +113,7 @@ export default function Home() {
     }
 
     loadCloudData(session.user.id);
+    loadEvents(session.user.id);
   }, [session?.user?.id]);
 
   useEffect(() => {
@@ -233,6 +253,95 @@ export default function Home() {
             minute: "2-digit"
           })}`
     );
+  }
+
+
+  async function loadEvents(userId) {
+    setEventsLoading(true);
+
+    const { data: rows, error } = await supabase
+      .from("events")
+      .select("*")
+      .eq("user_id", userId)
+      .order("event_time", { ascending: false })
+      .limit(100);
+
+    if (error) {
+      setEventMessage(
+        error.message.includes("events")
+          ? "事件資料表尚未建立，請先執行 ZIP 內的 supabase/migrations/v5_alpha1.sql。"
+          : `事件讀取失敗：${error.message}`
+      );
+      setEvents([]);
+    } else {
+      setEvents((rows || []).map(normalizeEvent));
+      setEventMessage("");
+    }
+
+    setEventsLoading(false);
+  }
+
+  async function addManualEvent() {
+    if (!session?.user?.id) return;
+
+    if (!newEvent.title.trim()) {
+      setEventMessage("請先輸入事件標題。");
+      return;
+    }
+
+    const impact = evaluateStrategyImpact(
+      newEvent,
+      data.strategies || {}
+    );
+
+    const payload = {
+      user_id: session.user.id,
+      symbol: newEvent.symbol.trim() || null,
+      event_type: newEvent.event_type,
+      title: newEvent.title.trim(),
+      summary: newEvent.summary.trim() || null,
+      source_name: newEvent.source_name || "手動建立",
+      source_type: newEvent.source_type,
+      score: Number(newEvent.score) || 20,
+      confidence: Number(newEvent.confidence) || 70,
+      strategy_impact: impact.impactsStrategy,
+      event_time: new Date().toISOString()
+    };
+
+    const { error } = await supabase
+      .from("events")
+      .insert(payload);
+
+    if (error) {
+      setEventMessage(`新增事件失敗：${error.message}`);
+      return;
+    }
+
+    setNewEvent({
+      ...newEvent,
+      symbol: "",
+      title: "",
+      summary: ""
+    });
+    setEventMessage("事件已加入 V5 Event Engine。");
+    await loadEvents(session.user.id);
+  }
+
+  async function markEventRead(eventId) {
+    const { error } = await supabase
+      .from("events")
+      .update({ is_read: true })
+      .eq("id", eventId);
+
+    if (!error) {
+      setEvents((current) =>
+        current.map((event) =>
+          event.id === eventId
+            ? { ...event, is_read: true }
+            : event
+        )
+      );
+    }
   }
 
   async function refreshMarketData() {
@@ -576,6 +685,34 @@ export default function Home() {
           tone: "blue"
         };
 
+
+  const strategyForDecision = {
+    ...cloneDefaultData().strategies,
+    ...(data.strategies || {})
+  };
+
+  const decisionSummary = buildDecisionSummary(
+    events,
+    strategyForDecision
+  );
+
+  const eventsBySymbol = useMemo(() => {
+    return events.reduce((map, event) => {
+      const key = event.symbol || "MARKET";
+      if (!map[key]) map[key] = [];
+      map[key].push(event);
+      return map;
+    }, {});
+  }, [events]);
+
+  const watchScores = Object.entries(eventsBySymbol)
+    .map(([symbol, symbolEvents]) => ({
+      symbol,
+      score: buildWatchScore(symbolEvents),
+      count: symbolEvents.length
+    }))
+    .sort((a, b) => b.score - a.score);
+
   if (authLoading) {
     return (
       <main className="center">
@@ -593,7 +730,7 @@ export default function Home() {
       <header className="topbar">
         <div>
           <h1>Jay Invest</h1>
-          <p>v3.2 雲端同步版</p>
+          <p>V5 Alpha 1・Event Engine</p>
         </div>
         <div className="topActions">
           <button
@@ -616,6 +753,204 @@ export default function Home() {
         <span>{session.user.email}</span>
         <b>{cloudLoading ? "同步中…" : cloudStatus}</b>
       </div>
+
+      <section className={`card commandCenter ${decisionSummary.status}`}>
+        <div className="commandTop">
+          <div>
+            <span>V5 今日決策</span>
+            <h2>{decisionSummary.title}</h2>
+            <p>{decisionSummary.reason}</p>
+          </div>
+          <div className="minutesBox">
+            <strong>{decisionSummary.minutes}</strong>
+            <small>分鐘</small>
+          </div>
+        </div>
+        <div className="commandMeta">
+          <span>事件數：{events.length}</span>
+          <span>
+            未讀：{events.filter((event) => !event.is_read).length}
+          </span>
+          <button
+            className="textButton"
+            onClick={() => loadEvents(session.user.id)}
+            disabled={eventsLoading}
+          >
+            {eventsLoading ? "更新中" : "更新事件"}
+          </button>
+        </div>
+      </section>
+
+      <section className="card">
+        <div className="sectionHeader">
+          <div>
+            <h2>Watch Score</h2>
+            <small>分數代表今天值不值得花時間關注，不是買賣評分。</small>
+          </div>
+          <span className="modeBadge">V5</span>
+        </div>
+
+        {watchScores.length === 0 ? (
+          <div className="empty smallEmpty">
+            尚無事件。可先在下方手動建立一筆測試事件。
+          </div>
+        ) : (
+          <div className="watchList">
+            {watchScores.slice(0, 8).map((item) => (
+              <div className="watchItem" key={item.symbol}>
+                <div>
+                  <b>{item.symbol}</b>
+                  <small>{item.count} 件事件</small>
+                </div>
+                <span
+                  className={
+                    item.score >= 80
+                      ? "score redScore"
+                      : item.score >= 50
+                      ? "score yellowScore"
+                      : "score greenScore"
+                  }
+                >
+                  {item.score}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="card">
+        <div className="sectionHeader">
+          <div>
+            <h2>事件中心</h2>
+            <small>V5 的晨報、推播、研究報告都會共用這裡的資料。</small>
+          </div>
+        </div>
+
+        {eventMessage && (
+          <div className="tradeMessage">{eventMessage}</div>
+        )}
+
+        {events.length === 0 ? (
+          <div className="empty smallEmpty">
+            目前沒有事件。
+          </div>
+        ) : (
+          <div className="eventList">
+            {events.slice(0, 20).map((event) => (
+              <article
+                className={`eventItem ${event.watch_level} ${
+                  event.is_read ? "read" : ""
+                }`}
+                key={event.id}
+              >
+                <div className="eventScore">
+                  <strong>{event.score}</strong>
+                  <small>{event.confidence}%</small>
+                </div>
+                <div className="eventContent">
+                  <div className="eventTitle">
+                    <b>{event.symbol || "市場"}</b>
+                    <span>{event.rule_label}</span>
+                  </div>
+                  <h3>{event.title}</h3>
+                  {event.summary && <p>{event.summary}</p>}
+                  <small>
+                    {event.source_name || "未知來源"}・
+                    {new Date(event.event_time).toLocaleString("zh-TW")}
+                  </small>
+                  {!event.is_read && (
+                    <button
+                      className="textButton"
+                      onClick={() => markEventRead(event.id)}
+                    >
+                      標記已讀
+                    </button>
+                  )}
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <details className="card settings">
+        <summary>新增測試事件</summary>
+        <div className="tradeGrid">
+          <Field
+            label="股票代號（可空白）"
+            value={newEvent.symbol}
+            onChange={(value) =>
+              setNewEvent({ ...newEvent, symbol: value })
+            }
+          />
+
+          <label>
+            <span>事件類型</span>
+            <select
+              value={newEvent.event_type}
+              onChange={(event) =>
+                setNewEvent({
+                  ...newEvent,
+                  event_type: event.target.value
+                })
+              }
+            >
+              <option value="material_announcement">重大訊息</option>
+              <option value="investor_conference">法說會</option>
+              <option value="earnings">財報</option>
+              <option value="monthly_revenue">月營收</option>
+              <option value="unusual_price">異常行情</option>
+              <option value="industry_news">產業新聞</option>
+              <option value="general_news">一般新聞</option>
+            </select>
+          </label>
+
+          <Field
+            label="事件標題"
+            value={newEvent.title}
+            onChange={(value) =>
+              setNewEvent({ ...newEvent, title: value })
+            }
+          />
+
+          <Field
+            label="摘要"
+            value={newEvent.summary}
+            onChange={(value) =>
+              setNewEvent({ ...newEvent, summary: value })
+            }
+          />
+
+          <Field
+            label="重要分數"
+            type="number"
+            value={newEvent.score}
+            onChange={(value) =>
+              setNewEvent({
+                ...newEvent,
+                score: Number(value)
+              })
+            }
+          />
+
+          <Field
+            label="可信度"
+            type="number"
+            value={newEvent.confidence}
+            onChange={(value) =>
+              setNewEvent({
+                ...newEvent,
+                confidence: Number(value)
+              })
+            }
+          />
+        </div>
+
+        <button className="tradeButton" onClick={addManualEvent}>
+          加入 Event Engine
+        </button>
+      </details>
 
       <section className="hero card">
         <span>總資產</span>

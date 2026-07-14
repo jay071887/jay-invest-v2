@@ -1,35 +1,46 @@
-# Jay Invest v3.4 Trade Ledger
+# Jay Invest V5 Alpha 1
 
-## 本版新增
-- 可自行設定證券手續費折數，例如 2 折填 2
-- 可自行設定每筆最低手續費
-- 買進前即時計算：
-  - 成交金額
-  - 折扣後手續費
-  - 交割總成本
-  - 含手續費單位成本
-- 按「加入庫存並更新均價」後：
-  - 相同股票自動增加股數
-  - 依舊成本＋本次總成本自動重算平均成本
-  - 新股票自動建立庫存
-  - 自動新增買進紀錄
-- 買進紀錄與券商設定會透過 Supabase 在手機、電腦同步
+這是 V5 的第一個基礎版本，重點是建立 Event Engine，而不是直接接 AI。
 
-## 計算方式
-買進成交金額 = 股數 × 成交價格
+## 已完成
+- Event Engine
+- Event Score
+- Watch Score
+- Strategy Impact
+- Decision Summary
+- 事件中心 UI
+- 手動建立測試事件
+- 標記事件已讀
+- AI Agent 輸入輸出介面
+- AI Reports 資料表
+- Notification Queue 資料表
+- ROADMAP.md
 
-手續費 = max（最低手續費，成交金額 × 0.1425% × 折扣比例）
+## 第一步：執行 Supabase SQL
+在 Supabase：
 
-新平均成本 =
-（原股數 × 原平均成本 ＋ 本次成交金額 ＋ 本次手續費）
-÷ 新總股數
+1. SQL Editor
+2. New query
+3. 開啟本專案：
+   `supabase/migrations/v5_alpha1.sql`
+4. 複製全部 SQL
+5. 貼上並按 Run
+6. 成功時應顯示 Success
 
-## 更新方式
-1. 解壓縮 ZIP。
-2. 複製所有內容到 GitHub Desktop 的 jay-invest-v2 本機資料夾。
-3. 選擇取代目的地中的檔案。
-4. GitHub Desktop：
-   - Summary：Upgrade to Jay Invest v3.4 Trade Ledger
-   - Commit to main
-   - Push origin
-5. 等待 Vercel 自動部署。
+## 第二步：更新 v5-ai-engine 分支
+1. 確認 GitHub Desktop Current branch 是 `v5-ai-engine`
+2. 解壓縮 ZIP
+3. 覆蓋本機 jay-invest-v2 專案
+4. Summary：
+   `Jay Invest V5 Alpha 1`
+5. Commit to v5-ai-engine
+6. Push origin
+
+## Vercel 測試
+目前 main 仍是正式版。要測試 V5：
+
+- GitHub Push 後，Vercel 通常會建立 Preview Deployment
+- 在 Vercel Deployments 找到 branch `v5-ai-engine`
+- 打開 Preview 網址測試
+
+不要先合併到 main。確認 V5 Alpha 1 正常後再處理。
