@@ -158,3 +158,272 @@ input{width:100%;margin-top:6px;padding:12px;border:1px solid var(--line);border
   .transactionRight{text-align:left}
   .deleteText{margin-left:0}
 }
+
+
+/* V5 Alpha 1 */
+.commandCenter{border-width:1px}
+.commandCenter.green{border-color:#245c32}
+.commandCenter.yellow{border-color:#6a5519}
+.commandCenter.red{border-color:#6d2725}
+.commandTop{display:flex;justify-content:space-between;gap:18px}
+.commandTop>div>span{color:var(--muted);font-size:12px}
+.commandTop h2{font-size:24px;margin:7px 0 4px}
+.commandTop p{font-size:13px;line-height:1.5}
+.minutesBox{
+  min-width:84px;height:84px;border-radius:22px;background:#101015;
+  display:flex;flex-direction:column;align-items:center;justify-content:center
+}
+.minutesBox strong{font-size:30px}
+.minutesBox small{margin-top:2px}
+.commandMeta{
+  display:flex;align-items:center;gap:14px;margin-top:16px;padding-top:14px;
+  border-top:1px solid var(--line);color:var(--muted);font-size:12px
+}
+.textButton{
+  border:0;background:transparent;color:var(--blue);padding:4px 0;
+  font-size:12px;font-weight:700;cursor:pointer
+}
+.commandMeta .textButton{margin-left:auto}
+.watchList{display:flex;flex-direction:column}
+.watchItem{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:11px 0;border-bottom:1px solid var(--line)
+}
+.watchItem:last-child{border-bottom:0}
+.watchItem b,.watchItem small{display:block}
+.watchItem small{margin-top:3px}
+.score{
+  display:grid;place-items:center;width:46px;height:34px;
+  border-radius:12px;font-weight:850
+}
+.greenScore{background:#122b1a;color:var(--green)}
+.yellowScore{background:#372d12;color:#ffd466}
+.redScore{background:#351718;color:#ff8f89}
+.eventList{display:flex;flex-direction:column;gap:10px}
+.eventItem{
+  display:flex;gap:12px;padding:14px;border-radius:17px;
+  background:#101015;border:1px solid var(--line)
+}
+.eventItem.green{border-color:#24432d}
+.eventItem.yellow{border-color:#5a4b24}
+.eventItem.red{border-color:#642825}
+.eventItem.read{opacity:.66}
+.eventScore{
+  width:52px;min-width:52px;height:58px;border-radius:14px;
+  background:#1c1c23;display:flex;flex-direction:column;
+  align-items:center;justify-content:center
+}
+.eventScore strong{font-size:20px}
+.eventScore small{font-size:10px;margin-top:2px}
+.eventContent{min-width:0;flex:1}
+.eventTitle{display:flex;align-items:center;gap:8px}
+.eventTitle b{font-size:13px}
+.eventTitle span{font-size:11px;color:var(--muted)}
+.eventContent h3{font-size:15px;margin:7px 0 4px}
+.eventContent p{font-size:13px;line-height:1.5;margin:0 0 7px}
+select{
+  width:100%;margin-top:6px;padding:12px;border:1px solid var(--line);
+  border-radius:12px;background:#0b0b0f;color:var(--text);font-size:15px
+}
+@media(max-width:470px){
+  .commandTop{align-items:flex-start}
+  .commandMeta{flex-wrap:wrap}
+  .commandMeta .textButton{margin-left:0}
+}
+
+
+
+
+/* V6 Wealth Assistant Foundation */
+.wealthGoalCard{
+  background:linear-gradient(180deg,#17171d 0%,#121218 100%)
+}
+.goalStatus{
+  padding:7px 10px;
+  border-radius:999px;
+  font-size:11px;
+  font-weight:850;
+  white-space:nowrap
+}
+.goalStatus.completed,
+.goalStatus.on_track{
+  background:#122b1a;
+  color:var(--green)
+}
+.goalStatus.behind{
+  background:#372d12;
+  color:#ffd466
+}
+.goalHeadline{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:10px
+}
+.goalHeadline>div,
+.goalStats>div{
+  padding:13px;
+  border-radius:15px;
+  background:#101015;
+  border:1px solid var(--line)
+}
+.goalHeadline span,
+.goalHeadline b,
+.goalStats span,
+.goalStats b{
+  display:block
+}
+.goalHeadline span,
+.goalStats span{
+  color:var(--muted);
+  font-size:10px
+}
+.goalHeadline b{
+  margin-top:6px;
+  font-size:20px
+}
+.goalProgressTrack{
+  height:10px;
+  margin-top:13px;
+  overflow:hidden;
+  border-radius:999px;
+  background:#0b0b0f;
+  border:1px solid var(--line)
+}
+.goalProgressTrack span{
+  display:block;
+  height:100%;
+  max-width:100%;
+  border-radius:inherit;
+  background:linear-gradient(90deg,#3487ff,#55d58a)
+}
+.goalStats{
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  gap:9px;
+  margin-top:13px
+}
+.goalStats b{
+  margin-top:5px;
+  font-size:15px
+}
+.goalAdvice{
+  margin-top:12px;
+  padding:14px;
+  border-radius:14px;
+  background:#111116;
+  border:1px solid var(--line)
+}
+.goalAdvice b,
+.goalAdvice span{
+  display:block
+}
+.goalAdvice span{
+  margin-top:6px;
+  color:var(--muted);
+  font-size:12px;
+  line-height:1.55
+}
+@media(max-width:600px){
+  .goalStats{
+    grid-template-columns:1fr 1fr
+  }
+}
+@media(max-width:470px){
+  .goalHeadline,
+  .goalStats{
+    grid-template-columns:1fr
+  }
+}
+
+
+/* V6 Simple Decision + transaction/holding fix */
+.simpleV6Decision{
+  padding:22px;
+  border-width:1px
+}
+.simpleV6Decision.green{border-color:#245c32}
+.simpleV6Decision.yellow{border-color:#6a5519}
+.simpleV6Answer{
+  display:flex;
+  align-items:center;
+  gap:13px;
+  margin-top:11px
+}
+.simpleV6Answer strong{
+  font-size:36px;
+  letter-spacing:-.8px
+}
+.simpleRebalanceBox{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:11px;
+  margin-top:17px
+}
+.simpleRebalanceBox>div{
+  padding:14px;
+  border-radius:15px;
+  background:#101015;
+  border:1px solid var(--line)
+}
+.simpleRebalanceBox span,
+.simpleRebalanceBox b{
+  display:block
+}
+.simpleRebalanceBox span{
+  color:var(--muted);
+  font-size:11px
+}
+.simpleRebalanceBox b{
+  margin-top:6px;
+  font-size:18px
+}
+
+.tradeTypeTabs{
+  gap:11px;
+  margin-bottom:18px
+}
+.tradeTypeTabs button{
+  min-height:58px;
+  padding:14px 12px;
+  border-radius:15px;
+  font-size:16px;
+  font-weight:850
+}
+.tradeTypeTabs button.active{
+  box-shadow:0 0 0 2px rgba(52,135,255,.2)
+}
+
+@media(max-width:470px){
+  .simpleRebalanceBox{
+    grid-template-columns:1fr
+  }
+  .tradeTypeTabs button{
+    min-height:54px;
+    font-size:15px
+  }
+}
+
+
+/* V6.1 action decision fix */
+.simpleMarketAction{
+  margin-top:14px;
+  padding:13px;
+  border-radius:14px;
+  background:#28220f;
+  border:1px solid #6a5519
+}
+.simpleMarketAction span,
+.simpleMarketAction b{
+  display:block
+}
+.simpleMarketAction span{
+  color:var(--muted);
+  font-size:10px
+}
+.simpleMarketAction b{
+  margin-top:5px;
+  font-size:14px
+}
+.fullRebalanceRow{
+  grid-column:1 / -1
+}
