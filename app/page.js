@@ -29,7 +29,10 @@ const DEFAULT_DATA = {
     reserveCash: 0,
     rebalanceStockTarget: 60,
     rebalanceCashTarget: 40,
-    rebalanceTolerance: 5
+    rebalanceTolerance: 5,
+    wealthGoalAmount: 2000000,
+    wealthGoalDate: "2027-07-18",
+    monthlyContribution: 30000
   },
   snapshots: [],
   transactions: [],
@@ -1272,7 +1275,7 @@ export default function Home() {
     aiDecisionStatus === "rebalance"
       ? "正2平衡策略已偏離容忍區間，建議查看調節金額。"
       : aiDecisionStatus === "review"
-      ? "今天有高重要事件，建議先查看市場分析與事件中心。"
+      ? "今天有高重要事件，建議先查看事件中心。"
       : aiDecisionStatus === "watch"
       ? "今天有持股事件值得留意，但目前不足以改變原策略。"
       : events.length > 0
@@ -1390,6 +1393,45 @@ export default function Home() {
     );
   }
 
+
+  const wealthGoalAmount = Math.max(
+    0,
+    Number(data.settings.wealthGoalAmount) || 0
+  );
+  const wealthGoalProgress =
+    wealthGoalAmount > 0
+      ? Math.min(100, (computed.totalAssets / wealthGoalAmount) * 100)
+      : 0;
+  const wealthGoalGap = Math.max(
+    0,
+    wealthGoalAmount - computed.totalAssets
+  );
+  const wealthGoalDate = data.settings.wealthGoalDate
+    ? new Date(`${data.settings.wealthGoalDate}T00:00:00`)
+    : null;
+  const monthsToGoal =
+    wealthGoalDate && !Number.isNaN(wealthGoalDate.getTime())
+      ? Math.max(
+          0,
+          Math.ceil(
+            (wealthGoalDate.getTime() - Date.now()) /
+              (1000 * 60 * 60 * 24 * 30.4375)
+          )
+        )
+      : 0;
+  const requiredMonthlyContribution =
+    monthsToGoal > 0 ? wealthGoalGap / monthsToGoal : wealthGoalGap;
+  const plannedMonthlyContribution = Math.max(
+    0,
+    Number(data.settings.monthlyContribution) || 0
+  );
+  const goalPaceStatus =
+    wealthGoalGap <= 0
+      ? "completed"
+      : plannedMonthlyContribution >= requiredMonthlyContribution
+      ? "on_track"
+      : "behind";
+
   if (authLoading) {
     return (
       <main className="center">
@@ -1407,7 +1449,7 @@ export default function Home() {
       <header className="topbar">
         <div>
           <h1>Jay Invest</h1>
-          <p>V5 AI Assistant・Core v1.2</p>
+          <p>V6 Wealth Assistant・Foundation</p>
         </div>
         <div className="topActions">
           <button
@@ -1824,6 +1866,75 @@ export default function Home() {
           label="緊急預備金"
           value={money(data.settings.emergencyFund)}
         />
+      </section>
+
+      <section className="card wealthGoalCard">
+        <div className="sectionHeader">
+          <div>
+            <h2>V6 財富目標</h2>
+            <small>依目前總資產、目標日期與每月投入估算進度。</small>
+          </div>
+          <span
+            className={`goalStatus ${goalPaceStatus}`}
+          >
+            {goalPaceStatus === "completed"
+              ? "已達成"
+              : goalPaceStatus === "on_track"
+              ? "進度正常"
+              : "需提高投入"}
+          </span>
+        </div>
+
+        <div className="goalHeadline">
+          <div>
+            <span>目前總資產</span>
+            <b>{money(computed.totalAssets)}</b>
+          </div>
+          <div>
+            <span>財富目標</span>
+            <b>{money(wealthGoalAmount)}</b>
+          </div>
+        </div>
+
+        <div className="goalProgressTrack">
+          <span style={{ width: `${wealthGoalProgress}%` }} />
+        </div>
+
+        <div className="goalStats">
+          <div>
+            <span>完成率</span>
+            <b>{wealthGoalProgress.toFixed(1)}%</b>
+          </div>
+          <div>
+            <span>距離目標</span>
+            <b>{money(wealthGoalGap)}</b>
+          </div>
+          <div>
+            <span>剩餘月份</span>
+            <b>{monthsToGoal} 個月</b>
+          </div>
+          <div>
+            <span>每月所需投入</span>
+            <b>{money(Math.ceil(requiredMonthlyContribution))}</b>
+          </div>
+        </div>
+
+        <div className="goalAdvice">
+          <b>Jay AI 財富進度</b>
+          <span>
+            {goalPaceStatus === "completed"
+              ? "你已達成目前設定的財富目標。"
+              : goalPaceStatus === "on_track"
+              ? `依每月投入 ${money(
+                  plannedMonthlyContribution
+                )} 的計畫，目前進度大致正常。`
+              : `依目前目標與期限，每月約需投入 ${money(
+                  Math.ceil(requiredMonthlyContribution)
+                )}；目前設定為 ${money(
+                  plannedMonthlyContribution
+                )}。`}
+          </span>
+        </div>
       </section>
 
       <section className="card">
@@ -2355,6 +2466,51 @@ export default function Home() {
         />
 
         <Field
+          label="財富目標金額"
+          type="number"
+          value={data.settings.wealthGoalAmount}
+          onChange={(value) =>
+            setData({
+              ...data,
+              settings: {
+                ...data.settings,
+                wealthGoalAmount: Number(value)
+              }
+            })
+          }
+        />
+
+        <Field
+          label="財富目標日期"
+          type="date"
+          value={data.settings.wealthGoalDate}
+          onChange={(value) =>
+            setData({
+              ...data,
+              settings: {
+                ...data.settings,
+                wealthGoalDate: value
+              }
+            })
+          }
+        />
+
+        <Field
+          label="每月預計投入"
+          type="number"
+          value={data.settings.monthlyContribution}
+          onChange={(value) =>
+            setData({
+              ...data,
+              settings: {
+                ...data.settings,
+                monthlyContribution: Number(value)
+              }
+            })
+          }
+        />
+
+        <Field
           label="緊急預備金"
           type="number"
           value={data.settings.emergencyFund}
@@ -2542,28 +2698,9 @@ export default function Home() {
         </div>
         )}
 
-        <StrategyToggle
-          label="投資日誌"
-          description="保留未來的操作與決策紀錄模組"
-          checked={strategy.investmentJournal}
-          onChange={(checked) =>
-            setData({
-              ...data,
-              strategies: {
-                ...strategy,
-                investmentJournal: checked
-              }
-            })
-          }
-        />
-
         <div className="strategySummary">
           <b>目前策略</b>
-          <span> 固定投入；`
-              : `${data.settings.recurringSymbol || "定期定額"} 暫停；`}
-            {strategy.goldBuying
-              ? "黃金買進開啟；"
-              : "黃金維持持有、不新增；"}
+          <span>
             {strategy.leveragedEtf
               ? `正2平衡 ${data.settings.rebalanceStockTarget || 60}/${
                   100 - Number(data.settings.rebalanceStockTarget || 60)

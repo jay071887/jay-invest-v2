@@ -232,3 +232,105 @@ select{
 }
 
 
+
+
+/* V6 Wealth Assistant Foundation */
+.wealthGoalCard{
+  background:linear-gradient(180deg,#17171d 0%,#121218 100%)
+}
+.goalStatus{
+  padding:7px 10px;
+  border-radius:999px;
+  font-size:11px;
+  font-weight:850;
+  white-space:nowrap
+}
+.goalStatus.completed,
+.goalStatus.on_track{
+  background:#122b1a;
+  color:var(--green)
+}
+.goalStatus.behind{
+  background:#372d12;
+  color:#ffd466
+}
+.goalHeadline{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:10px
+}
+.goalHeadline>div,
+.goalStats>div{
+  padding:13px;
+  border-radius:15px;
+  background:#101015;
+  border:1px solid var(--line)
+}
+.goalHeadline span,
+.goalHeadline b,
+.goalStats span,
+.goalStats b{
+  display:block
+}
+.goalHeadline span,
+.goalStats span{
+  color:var(--muted);
+  font-size:10px
+}
+.goalHeadline b{
+  margin-top:6px;
+  font-size:20px
+}
+.goalProgressTrack{
+  height:10px;
+  margin-top:13px;
+  overflow:hidden;
+  border-radius:999px;
+  background:#0b0b0f;
+  border:1px solid var(--line)
+}
+.goalProgressTrack span{
+  display:block;
+  height:100%;
+  max-width:100%;
+  border-radius:inherit;
+  background:linear-gradient(90deg,#3487ff,#55d58a)
+}
+.goalStats{
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  gap:9px;
+  margin-top:13px
+}
+.goalStats b{
+  margin-top:5px;
+  font-size:15px
+}
+.goalAdvice{
+  margin-top:12px;
+  padding:14px;
+  border-radius:14px;
+  background:#111116;
+  border:1px solid var(--line)
+}
+.goalAdvice b,
+.goalAdvice span{
+  display:block
+}
+.goalAdvice span{
+  margin-top:6px;
+  color:var(--muted);
+  font-size:12px;
+  line-height:1.55
+}
+@media(max-width:600px){
+  .goalStats{
+    grid-template-columns:1fr 1fr
+  }
+}
+@media(max-width:470px){
+  .goalHeadline,
+  .goalStats{
+    grid-template-columns:1fr
+  }
+}
