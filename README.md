@@ -1,54 +1,44 @@
-# Jay Invest V6 — Wealth Assistant Foundation
+# Jay Invest V6 — Simple Decision & Holdings Fix
 
-## 本版重點
+## 本版修改
 
-V6 第一版先建立穩定可部署的「財富助理」基礎，並修復先前定期定額殘留造成的 Vercel Build Error。
+### 首頁決策
+只顯示：
+- 今天需要變動？
+- 需要／不需要
 
-### 修復
-- 完整修復 `app/page.js` JSX 語法錯誤
-- 移除定期定額殘留文字
-- 移除黃金策略殘留文字
-- 策略摘要只保留正2平衡策略
-- 市場分析與模擬器維持移除
+若正2平衡策略開啟，才額外顯示：
+- 需要調整／不用調整
+- 建議調整金額
 
-### V6 財富目標
-新增可自訂：
-- 財富目標金額
-- 目標日期
-- 每月預計投入
-
-系統自動計算：
-- 目前完成率
-- 距離目標金額
-- 剩餘月份
-- 每月約需投入金額
-- 目前進度是否正常
-
-### 保留功能
-- Jay AI：今天需要變動？
-- Jay AI 規則式問答
-- Cash Engine
-- 可投資現金
-- 緊急預備金
-- 股票庫存與均價
+已移除：
+- 詢問 Jay AI
+- 為什麼
 - 事件中心
-- AI 績效分析
-- 正2平衡策略（開啟後才顯示比例設定）
+
+### 新增交易按鈕
+買進、賣出、現金收入、現金支出按鈕已放大，較容易點選。
+
+### 持股不再消失
+修正原本的重大問題：
+
+以前新增買進交易時，系統會只依交易紀錄重建庫存，造成原先手動輸入的持股股數消失。
+
+現在改成：
+- 買進既有股票：原始股數＋本次股數
+- 平均成本依原始庫存與本次成交重新計算
+- 買進新股票：新增一筆持股
+- 賣出：只扣除賣出股數
+- 其他未交易持股完全保留
+- 復原交易會回復交易前的原始股數與均價
 
 ## 更新方式
 1. GitHub Desktop 確認分支為 `v5-ai-engine`
 2. 解壓縮 ZIP
 3. 覆蓋本機 `jay-invest-v2`
-4. Summary：`Jay Invest V6 Wealth Assistant Foundation`
+4. Summary：`Jay Invest V6 Simple Decision Holdings Fix`
 5. Commit
 6. Push origin
 7. 開啟 Vercel Preview
 
 本版不需要新增 Supabase SQL。
-
-
-## Registry 修正版
-
-本壓縮檔已將 `package-lock.json` 內的套件下載位置改為公開的 npm Registry，並加入 `.npmrc`。
-
-修正原因：前一版的 lockfile 含有內部套件閘道網址，Vercel 無法連線，因而出現 `ETIMEDOUT`。

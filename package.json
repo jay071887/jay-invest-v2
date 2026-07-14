@@ -1,6 +1,6 @@
 {
-  "name": "jay-invest-v6-wealth-assistant-foundation",
-  "version": "6.0.0",
+  "name": "jay-invest-v6-simple-decision-holdings-fix",
+  "version": "6.0.2",
   "private": true,
   "scripts": {
     "dev": "next dev",

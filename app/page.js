@@ -863,10 +863,72 @@ export default function Home() {
       ...(data.transactions || [])
     ];
 
-    const nextHoldings = rebuildHoldingsFromTransactions(
-      nextTransactions,
-      data.holdings || []
-    );
+    const holdingBefore = existingHolding
+      ? {
+          id: existingHolding.id,
+          symbol: existingHolding.symbol,
+          shares: Number(existingHolding.shares) || 0,
+          averageCost: Number(existingHolding.averageCost) || 0
+        }
+      : null;
+
+    let nextHoldings;
+
+    if (type === "buy") {
+      const previousShares = Number(existingHolding?.shares) || 0;
+      const previousAverageCost =
+        Number(existingHolding?.averageCost) || 0;
+      const newShares = previousShares + shares;
+      const newAverageCost =
+        newShares > 0
+          ? (
+              previousShares * previousAverageCost +
+              tradePreview.amount +
+              tradePreview.fee
+            ) / newShares
+          : 0;
+
+      if (existingHolding) {
+        nextHoldings = (data.holdings || []).map((holding) =>
+          holding.id === existingHolding.id
+            ? {
+                ...holding,
+                shares: newShares,
+                averageCost: Number(newAverageCost.toFixed(6))
+              }
+            : holding
+        );
+      } else {
+        nextHoldings = [
+          ...(data.holdings || []),
+          {
+            id: crypto.randomUUID(),
+            symbol,
+            shares: newShares,
+            averageCost: Number(newAverageCost.toFixed(6))
+          }
+        ];
+      }
+    } else {
+      const remainingShares =
+        (Number(existingHolding?.shares) || 0) - shares;
+
+      nextHoldings =
+        remainingShares > 0
+          ? (data.holdings || []).map((holding) =>
+              holding.id === existingHolding.id
+                ? {
+                    ...holding,
+                    shares: remainingShares
+                  }
+                : holding
+            )
+          : (data.holdings || []).filter(
+              (holding) => holding.id !== existingHolding.id
+            );
+    }
+
+    transaction.holdingBefore = holdingBefore;
 
     const nextCash = currentCash + tradePreview.cashChange;
 
@@ -922,10 +984,78 @@ export default function Home() {
       (item) => item.id !== transactionId
     );
 
-    const nextHoldings = rebuildHoldingsFromTransactions(
-      nextTransactions,
-      data.holdings || []
-    );
+    let nextHoldings = [...(data.holdings || [])];
+
+    if (["buy", "sell"].includes(transaction.type)) {
+      const before = transaction.holdingBefore;
+      const currentIndex = nextHoldings.findIndex(
+        (holding) => holding.symbol === transaction.symbol
+      );
+
+      if (before) {
+        if (currentIndex >= 0) {
+          nextHoldings[currentIndex] = {
+            ...nextHoldings[currentIndex],
+            id: before.id || nextHoldings[currentIndex].id,
+            symbol: before.symbol,
+            shares: before.shares,
+            averageCost: before.averageCost
+          };
+        } else {
+          nextHoldings.push({
+            id: before.id || crypto.randomUUID(),
+            symbol: before.symbol,
+            shares: before.shares,
+            averageCost: before.averageCost
+          });
+        }
+      } else if (transaction.type === "buy" && currentIndex >= 0) {
+        const current = nextHoldings[currentIndex];
+        const remainingShares =
+          Number(current.shares || 0) -
+          Number(transaction.shares || 0);
+
+        if (remainingShares > 0) {
+          const remainingCost =
+            Number(current.shares || 0) *
+              Number(current.averageCost || 0) -
+            Number(transaction.totalCost || 0);
+
+          nextHoldings[currentIndex] = {
+            ...current,
+            shares: remainingShares,
+            averageCost: Math.max(
+              0,
+              Number((remainingCost / remainingShares).toFixed(6))
+            )
+          };
+        } else {
+          nextHoldings.splice(currentIndex, 1);
+        }
+      } else if (transaction.type === "sell") {
+        const restoredShares =
+          Number(transaction.shares || 0) +
+          (currentIndex >= 0
+            ? Number(nextHoldings[currentIndex].shares || 0)
+            : 0);
+
+        const restoredHolding = {
+          id:
+            currentIndex >= 0
+              ? nextHoldings[currentIndex].id
+              : crypto.randomUUID(),
+          symbol: transaction.symbol,
+          shares: restoredShares,
+          averageCost: Number(transaction.averageCostBefore || 0)
+        };
+
+        if (currentIndex >= 0) {
+          nextHoldings[currentIndex] = restoredHolding;
+        } else {
+          nextHoldings.push(restoredHolding);
+        }
+      }
+    }
 
     const currentCash = Number(data.settings.investmentCash) || 0;
     const revertedCash =
@@ -1449,7 +1579,7 @@ export default function Home() {
       <header className="topbar">
         <div>
           <h1>Jay Invest</h1>
-          <p>V6 Wealth Assistant・Foundation</p>
+          <p>V6 Wealth Assistant・Simple Decision</p>
         </div>
         <div className="topActions">
           <button
@@ -1474,296 +1604,46 @@ export default function Home() {
       </div>
 
       <section
-        className={`card aiAssistantCard ${aiDecisionStatus}`}
+        className={`card simpleV6Decision ${
+          needsRebalance || decisionSummary.status === "red"
+            ? "yellow"
+            : "green"
+        }`}
       >
-        <div className="aiAssistantTop">
-          <div>
-            <span className="eyebrow">Jay AI Assistant</span>
-            <h2>今天需要變動？</h2>
-          </div>
-          <span className={`assistantStatus ${aiDecisionStatus}`}>
-            {aiDecisionLabel}
-          </span>
-        </div>
+        <span className="eyebrow">今天需要變動？</span>
 
-        <div className="assistantDecision">
+        <div className="simpleV6Answer">
           <span
             className={`decisionDot ${
-              aiDecisionStatus === "hold"
-                ? "green"
-                : aiDecisionStatus === "watch" ||
-                  aiDecisionStatus === "rebalance"
+              needsRebalance || decisionSummary.status === "red"
                 ? "yellow"
-                : "red"
+                : "green"
             }`}
           />
-          <strong>{aiDecisionLabel}</strong>
+          <strong>
+            {needsRebalance || decisionSummary.status === "red"
+              ? "需要"
+              : "不需要"}
+          </strong>
         </div>
-
-        <p className="assistantOneLine">{aiOneLine}</p>
 
         {strategy.leveragedEtf && (
-          <div className="assistantRebalance">
+          <div className="simpleRebalanceBox">
             <div>
               <span>正2平衡</span>
-              <b>
-                目前 {currentStockRatio.toFixed(1)}%／
-                {currentCashRatio.toFixed(1)}%
-              </b>
+              <b>{needsRebalance ? "需要調整" : "不用調整"}</b>
             </div>
-            <div>
-              <span>目標</span>
-              <b>
-                {stockTarget.toFixed(0)}%／{cashTarget.toFixed(0)}%
-              </b>
-            </div>
-            <div>
-              <span>建議調節</span>
-              <b>
-                {needsRebalance
-                  ? money(Math.abs(rebalanceAmount))
-                  : money(0)}
-              </b>
-            </div>
-          </div>
-        )}
 
-        <button
-          className="whyButton"
-          onClick={() =>
-            setShowDecisionReasons(!showDecisionReasons)
-          }
-        >
-          {showDecisionReasons ? "收合原因" : "為什麼？"}
-        </button>
-
-        {showDecisionReasons && (
-          <div className="assistantReasons">
-            {aiDecisionReasons.map((reason, index) => (
-              <span key={index}>✓ {reason}</span>
-            ))}
-          </div>
-        )}
-
-        <div className="assistantAsk">
-          <input
-            value={assistantQuestion}
-            placeholder="詢問 Jay AI，例如：今天適合加碼嗎？"
-            onChange={(event) =>
-              setAssistantQuestion(event.target.value)
-            }
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                answerAssistantQuestion();
-              }
-            }}
-          />
-          <button onClick={answerAssistantQuestion}>詢問</button>
-        </div>
-
-        {assistantAnswer && (
-          <div className="assistantReply">
-            <b>Jay AI</b>
-            <p>{assistantAnswer}</p>
+            {needsRebalance && (
+              <div>
+                <span>建議調整金額</span>
+                <b>{money(Math.abs(rebalanceAmount))}</b>
+              </div>
+            )}
           </div>
         )}
       </section>
 
-      <section className="card">
-        <div className="sectionHeader">
-          <div>
-            <h2>事件中心</h2>
-            <small>
-              預設顯示前 3 則；可左右滑動查看更多，或展開全部事件。
-            </small>
-          </div>
-          {events.length > 3 && (
-            <button
-              className="smallButton"
-              onClick={() => setShowAllEvents(!showAllEvents)}
-            >
-              {showAllEvents ? "收合" : `查看全部 ${events.length} 則`}
-            </button>
-          )}
-        </div>
-
-        {eventMessage && (
-          <div className="tradeMessage">{eventMessage}</div>
-        )}
-
-        {events.length === 0 ? (
-          <div className="empty smallEmpty">
-            目前沒有事件。
-          </div>
-        ) : (
-          <div
-            className={`eventList ${
-              showAllEvents ? "expanded" : "compactScroller"
-            }`}
-          >
-            {(showAllEvents ? events.slice(0, 20) : events.slice(0, 10)).map((event) => {
-              const impact = getPortfolioImpact(event);
-              const recommendation = getEventRecommendation(event);
-              const breakdown = getScoreBreakdown(event);
-
-              return (
-                <article
-                  className={`eventItem ${
-                    showAllEvents ? "fullCard" : "compactCard"
-                  } ${event.watch_level} ${
-                    event.is_read ? "read" : ""
-                  }`}
-                  key={event.id}
-                >
-                  <div className="eventTopLine">
-                    <div className="eventScore">
-                      <strong>{event.score}</strong>
-                      <small>重要分數</small>
-                    </div>
-
-                    <div className="eventIdentity">
-                      <div className="eventTitle">
-                        <b>{event.symbol || "市場"}</b>
-                        <span>{event.rule_label}</span>
-                      </div>
-                      <h3>{event.title}</h3>
-                      {!showAllEvents && event.summary && (
-                        <p className="compactSummary">{event.summary}</p>
-                      )}
-                    </div>
-
-                    <span
-                      className={`priorityBadge ${recommendation.tone}`}
-                    >
-                      {recommendation.title}
-                    </span>
-                  </div>
-
-                  <div className="eventMetrics compactOptional">
-                    <div>
-                      <span>事件重要性</span>
-                      <b>{importanceLabel(event.score)}</b>
-                      <small>{starRating(event.score)}</small>
-                    </div>
-
-                    <div>
-                      <span>資料可信度</span>
-                      <b>{confidenceLabel(event.confidence)}</b>
-                      <small>{event.confidence}%</small>
-                    </div>
-
-                    <div>
-                      <span>對我的影響</span>
-                      <b>{impact.label}</b>
-                      <small>{starRating(impact.score)}</small>
-                    </div>
-
-                    <div>
-                      <span>建議閱讀時間</span>
-                      <b>{readMinutes(event.score)} 分鐘</b>
-                      <small>
-                        {event.score >= 70 ? "今天閱讀" : "有空再看"}
-                      </small>
-                    </div>
-                  </div>
-
-                  {event.summary && (
-                    <div className="aiSummary compactOptional">
-                      <span>AI 摘要</span>
-                      <p>{event.summary}</p>
-                    </div>
-                  )}
-
-                  <div className={`eventAdvice compactAdvice ${recommendation.tone}`}>
-                    <b>{recommendation.title}</b>
-                    <span>{recommendation.detail}</span>
-                  </div>
-
-                  <div className="sourceRow compactOptional">
-                    <div>
-                      <span>來源</span>
-                      <b>{event.source_name || "未知來源"}</b>
-                      <small>
-                        {event.source_type === "official"
-                          ? "官方資料"
-                          : event.source_type === "reliable_media"
-                          ? "可信媒體"
-                          : "尚待查證"}
-                      </small>
-                    </div>
-
-                    {event.source_url ? (
-                      <a
-                        href={event.source_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="sourceButton"
-                      >
-                        查看原始來源
-                      </a>
-                    ) : (
-                      <span className="sourceUnavailable">
-                        目前沒有外部來源連結
-                      </span>
-                    )}
-                  </div>
-
-                  <details className="explainChain compactOptional">
-                    <summary>查看 AI 評分原因</summary>
-
-                    <div className="breakdownRow">
-                      <span>來源類型</span>
-                      <b>+{breakdown.officialPoints}</b>
-                    </div>
-
-                    <div className="breakdownRow">
-                      <span>事件類型</span>
-                      <b>+{breakdown.typePoints}</b>
-                    </div>
-
-                    <div className="breakdownRow">
-                      <span>可信度</span>
-                      <b>+{breakdown.confidencePoints}</b>
-                    </div>
-
-                    <div className="breakdownRow">
-                      <span>投資組合關聯</span>
-                      <b>+{breakdown.portfolioPoints}</b>
-                    </div>
-
-                    <div className="breakdownRow total">
-                      <span>綜合重要性</span>
-                      <b>{event.score} / 100</b>
-                    </div>
-
-                    <small>
-                      此為事件關注分數，不代表上漲機率，也不是買賣建議。
-                    </small>
-                  </details>
-
-                  <div className="eventFooter">
-                    <small>
-                      更新時間：
-                      {new Date(event.event_time).toLocaleString("zh-TW")}
-                    </small>
-
-                    {!event.is_read ? (
-                      <button
-                        className="textButton"
-                        onClick={() => markEventRead(event.id)}
-                      >
-                        標記已讀
-                      </button>
-                    ) : (
-                      <span className="readBadge">已讀</span>
-                    )}
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        )}
-      </section>
 
       <section className="hero card">
         <span>總資產</span>

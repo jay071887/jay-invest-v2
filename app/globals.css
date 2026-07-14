@@ -334,3 +334,71 @@ select{
     grid-template-columns:1fr
   }
 }
+
+
+/* V6 Simple Decision + transaction/holding fix */
+.simpleV6Decision{
+  padding:22px;
+  border-width:1px
+}
+.simpleV6Decision.green{border-color:#245c32}
+.simpleV6Decision.yellow{border-color:#6a5519}
+.simpleV6Answer{
+  display:flex;
+  align-items:center;
+  gap:13px;
+  margin-top:11px
+}
+.simpleV6Answer strong{
+  font-size:36px;
+  letter-spacing:-.8px
+}
+.simpleRebalanceBox{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:11px;
+  margin-top:17px
+}
+.simpleRebalanceBox>div{
+  padding:14px;
+  border-radius:15px;
+  background:#101015;
+  border:1px solid var(--line)
+}
+.simpleRebalanceBox span,
+.simpleRebalanceBox b{
+  display:block
+}
+.simpleRebalanceBox span{
+  color:var(--muted);
+  font-size:11px
+}
+.simpleRebalanceBox b{
+  margin-top:6px;
+  font-size:18px
+}
+
+.tradeTypeTabs{
+  gap:11px;
+  margin-bottom:18px
+}
+.tradeTypeTabs button{
+  min-height:58px;
+  padding:14px 12px;
+  border-radius:15px;
+  font-size:16px;
+  font-weight:850
+}
+.tradeTypeTabs button.active{
+  box-shadow:0 0 0 2px rgba(52,135,255,.2)
+}
+
+@media(max-width:470px){
+  .simpleRebalanceBox{
+    grid-template-columns:1fr
+  }
+  .tradeTypeTabs button{
+    min-height:54px;
+    font-size:15px
+  }
+}
