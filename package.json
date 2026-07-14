@@ -1,6 +1,6 @@
 {
-  "name": "jay-invest-v3-3-strategy",
-  "version": "3.3.0",
+  "name": "jay-invest-v3-4-trades",
+  "version": "3.4.0",
   "private": true,
   "scripts": {
     "dev": "next dev",

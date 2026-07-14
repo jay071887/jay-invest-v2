@@ -18,9 +18,12 @@ const DEFAULT_DATA = {
     goldTael: 2.1,
     manualGoldTaelPrice: 0,
     taiexHigh: 0,
-    goal: 3000000
+    goal: 3000000,
+    brokerageDiscount: 2,
+    minimumFee: 20
   },
   snapshots: [],
+  transactions: [],
   executedTier: "",
   strategies: {
     recurring009816: true,
@@ -58,6 +61,13 @@ export default function Home() {
   const [gold, setGold] = useState(null);
   const [goldBase, setGoldBase] = useState(null);
   const [marketLoading, setMarketLoading] = useState(false);
+  const [trade, setTrade] = useState({
+    symbol: "009816",
+    shares: 0,
+    price: 0,
+    date: new Date().toISOString().slice(0, 10)
+  });
+  const [tradeMessage, setTradeMessage] = useState("");
   const saveTimer = useRef(null);
   const hydrated = useRef(false);
 
@@ -136,7 +146,10 @@ export default function Home() {
         strategies: {
           ...cloneDefaultData().strategies,
           ...(row.data.strategies || {})
-        }
+        },
+        transactions: Array.isArray(row.data.transactions)
+          ? row.data.transactions
+          : []
       });
       setCloudStatus("已從雲端同步");
     } else {
@@ -190,7 +203,8 @@ export default function Home() {
           : cloneDefaultData().settings,
         snapshots: snapshots ? JSON.parse(snapshots) : [],
         executedTier: executedTier || "",
-        strategies: cloneDefaultData().strategies
+        strategies: cloneDefaultData().strategies,
+        transactions: []
       };
     } catch {
       return null;
@@ -403,6 +417,121 @@ export default function Home() {
     });
   }, [computed.totalAsset]);
 
+
+  const tradePreview = useMemo(() => {
+    const shares = Number(trade.shares) || 0;
+    const price = Number(trade.price) || 0;
+    const amount = shares * price;
+    const discount = Math.max(
+      0,
+      Number(data.settings.brokerageDiscount) || 0
+    ) / 10;
+    const calculatedFee = amount * 0.001425 * discount;
+    const fee =
+      amount > 0
+        ? Math.max(
+            Number(data.settings.minimumFee) || 0,
+            Math.round(calculatedFee)
+          )
+        : 0;
+    const totalCost = amount + fee;
+
+    return {
+      amount,
+      fee,
+      totalCost,
+      effectiveUnitCost: shares > 0 ? totalCost / shares : 0
+    };
+  }, [
+    trade,
+    data.settings.brokerageDiscount,
+    data.settings.minimumFee
+  ]);
+
+  function addBuyTransaction() {
+    const symbol = trade.symbol.trim();
+    const shares = Math.floor(Number(trade.shares) || 0);
+    const price = Number(trade.price) || 0;
+
+    if (!symbol || shares <= 0 || price <= 0) {
+      setTradeMessage("請輸入股票代號、買進股數與成交價格。");
+      return;
+    }
+
+    const existingIndex = data.holdings.findIndex(
+      (holding) => holding.symbol === symbol
+    );
+    const nextHoldings = [...data.holdings];
+
+    if (existingIndex >= 0) {
+      const existing = nextHoldings[existingIndex];
+      const oldShares = Number(existing.shares) || 0;
+      const oldCostBasis =
+        oldShares * (Number(existing.averageCost) || 0);
+      const newShares = oldShares + shares;
+      const newAverageCost =
+        (oldCostBasis + tradePreview.totalCost) / newShares;
+
+      nextHoldings[existingIndex] = {
+        ...existing,
+        shares: newShares,
+        averageCost: Number(newAverageCost.toFixed(6))
+      };
+    } else {
+      nextHoldings.push({
+        id: crypto.randomUUID(),
+        symbol,
+        shares,
+        averageCost: Number(
+          tradePreview.effectiveUnitCost.toFixed(6)
+        )
+      });
+    }
+
+    const transaction = {
+      id: crypto.randomUUID(),
+      type: "buy",
+      symbol,
+      shares,
+      price,
+      amount: tradePreview.amount,
+      fee: tradePreview.fee,
+      totalCost: tradePreview.totalCost,
+      date: trade.date,
+      createdAt: new Date().toISOString()
+    };
+
+    setData({
+      ...data,
+      holdings: nextHoldings,
+      transactions: [
+        transaction,
+        ...(data.transactions || [])
+      ].slice(0, 500)
+    });
+
+    setTradeMessage(
+      `已買進 ${symbol} ${shares.toLocaleString(
+        "zh-TW"
+      )} 股，庫存與均價已自動更新。`
+    );
+
+    setTrade({
+      ...trade,
+      shares: 0,
+      price: 0
+    });
+  }
+
+  function deleteTransaction(transactionId) {
+    setData({
+      ...data,
+      transactions: (data.transactions || []).filter(
+        (transaction) => transaction.id !== transactionId
+      )
+    });
+  }
+
   const strategy = {
     ...cloneDefaultData().strategies,
     ...(data.strategies || {})
@@ -593,6 +722,84 @@ export default function Home() {
 
       <section className="card">
         <div className="sectionHeader">
+          <div>
+            <h2>買進登錄</h2>
+            <small>輸入成交資料後，自動計算手續費、加入庫存並重算均價。</small>
+          </div>
+          <span className="modeBadge">
+            {data.settings.brokerageDiscount} 折
+          </span>
+        </div>
+
+        <div className="tradeGrid">
+          <Field
+            label="股票代號"
+            value={trade.symbol}
+            onChange={(value) =>
+              setTrade({ ...trade, symbol: value.trim() })
+            }
+          />
+          <Field
+            label="買進日期"
+            type="date"
+            value={trade.date}
+            onChange={(value) =>
+              setTrade({ ...trade, date: value })
+            }
+          />
+          <Field
+            label="成交股數"
+            type="number"
+            value={trade.shares}
+            onChange={(value) =>
+              setTrade({ ...trade, shares: Number(value) })
+            }
+          />
+          <Field
+            label="成交價格"
+            type="number"
+            step="0.01"
+            value={trade.price}
+            onChange={(value) =>
+              setTrade({ ...trade, price: Number(value) })
+            }
+          />
+        </div>
+
+        <div className="costPreview">
+          <Row
+            label="成交金額"
+            value={money(tradePreview.amount)}
+          />
+          <Row
+            label={`買進手續費（${data.settings.brokerageDiscount} 折）`}
+            value={money(tradePreview.fee)}
+          />
+          <Row
+            label="交割總成本"
+            value={money(tradePreview.totalCost)}
+          />
+          <Row
+            label="含手續費單位成本"
+            value={
+              tradePreview.effectiveUnitCost
+                ? tradePreview.effectiveUnitCost.toFixed(4)
+                : "0"
+            }
+          />
+        </div>
+
+        <button className="tradeButton" onClick={addBuyTransaction}>
+          加入庫存並更新均價
+        </button>
+
+        {tradeMessage && (
+          <div className="tradeMessage">{tradeMessage}</div>
+        )}
+      </section>
+
+      <section className="card">
+        <div className="sectionHeader">
           <h2>持股管理</h2>
           <button
             className="smallButton"
@@ -724,6 +931,55 @@ export default function Home() {
       </section>
 
       <section className="card">
+        <h2>最近買進紀錄</h2>
+        {(data.transactions || []).length === 0 ? (
+          <div className="empty smallEmpty">
+            尚未新增買進紀錄。
+          </div>
+        ) : (
+          <div className="transactionList">
+            {(data.transactions || []).slice(0, 20).map(
+              (transaction) => (
+                <div
+                  className="transactionItem"
+                  key={transaction.id}
+                >
+                  <div>
+                    <b>
+                      {transaction.symbol}・買進{" "}
+                      {Number(
+                        transaction.shares
+                      ).toLocaleString("zh-TW")}{" "}
+                      股
+                    </b>
+                    <small>
+                      {transaction.date}｜成交價{" "}
+                      {Number(transaction.price).toFixed(2)}
+                      ｜手續費 {money(transaction.fee)}
+                    </small>
+                  </div>
+                  <div className="transactionRight">
+                    <b>{money(transaction.totalCost)}</b>
+                    <button
+                      className="deleteText"
+                      onClick={() =>
+                        deleteTransaction(transaction.id)
+                      }
+                    >
+                      刪除紀錄
+                    </button>
+                  </div>
+                </div>
+              )
+            )}
+          </div>
+        )}
+        <small className="warningText">
+          刪除交易紀錄不會回復庫存；如輸入錯誤，請同時到持股管理修正股數與均價。
+        </small>
+      </section>
+
+      <section className="card">
         <h2>資產成長</h2>
         <MiniChart data={data.snapshots || []} />
         <small>
@@ -733,6 +989,41 @@ export default function Home() {
 
       <details className="card settings">
         <summary>其他設定</summary>
+
+        <Field
+          label="證券手續費折數"
+          type="number"
+          step="0.1"
+          value={data.settings.brokerageDiscount}
+          onChange={(value) =>
+            setData({
+              ...data,
+              settings: {
+                ...data.settings,
+                brokerageDiscount: Number(value)
+              }
+            })
+          }
+        />
+
+        <Field
+          label="每筆最低手續費"
+          type="number"
+          value={data.settings.minimumFee}
+          onChange={(value) =>
+            setData({
+              ...data,
+              settings: {
+                ...data.settings,
+                minimumFee: Number(value)
+              }
+            })
+          }
+        />
+
+        <p className="hint">
+          例如券商 2 折請填 2；若零股最低手續費為 1 元，可自行把最低手續費改成 1。
+        </p>
 
         <Field
           label="投資現金"

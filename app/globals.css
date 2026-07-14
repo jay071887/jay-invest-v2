@@ -116,3 +116,45 @@ input{width:100%;margin-top:6px;padding:12px;border:1px solid var(--line);border
 }
 .strategySummary b,.strategySummary span{display:block}
 .strategySummary span{margin-top:6px;color:var(--muted);font-size:13px;line-height:1.55}
+
+
+/* Trade ledger */
+.tradeGrid{
+  display:grid;grid-template-columns:1fr 1fr;gap:10px
+}
+.tradeGrid label{font-size:12px;color:var(--muted)}
+.costPreview{
+  margin-top:14px;padding:4px 14px;border-radius:16px;
+  background:#101015;border:1px solid var(--line)
+}
+.tradeButton{
+  width:100%;margin-top:14px;border:0;border-radius:14px;
+  padding:13px;background:var(--blue);color:white;
+  font-size:15px;font-weight:800
+}
+.tradeMessage{
+  margin-top:12px;padding:11px 13px;border-radius:12px;
+  background:#122b1a;color:var(--green);font-size:13px;
+  line-height:1.5
+}
+.transactionList{display:flex;flex-direction:column}
+.transactionItem{
+  display:flex;align-items:flex-start;justify-content:space-between;
+  gap:12px;padding:13px 0;border-bottom:1px solid var(--line)
+}
+.transactionItem:last-child{border-bottom:0}
+.transactionItem b{font-size:14px}
+.transactionItem small{margin-top:5px;line-height:1.45}
+.transactionRight{text-align:right;white-space:nowrap}
+.deleteText{
+  display:block;margin:6px 0 0 auto;padding:0;border:0;
+  background:transparent;color:#ff8f89;font-size:12px
+}
+.smallEmpty{height:80px}
+.warningText{margin-top:12px;line-height:1.5;color:var(--orange)}
+@media(max-width:470px){
+  .tradeGrid{grid-template-columns:1fr}
+  .transactionItem{flex-direction:column}
+  .transactionRight{text-align:left}
+  .deleteText{margin-left:0}
+}
