@@ -256,3 +256,216 @@ select{
 @media(max-width:470px){
   .simulatorActions{grid-template-columns:1fr}
 }
+
+
+/* V5 Alpha 2.2 complete event cards */
+.eventItem{
+  display:block;
+  padding:17px;
+}
+.eventTopLine{
+  display:grid;
+  grid-template-columns:auto minmax(0,1fr) auto;
+  gap:12px;
+  align-items:start
+}
+.eventIdentity{min-width:0}
+.eventIdentity h3{
+  font-size:17px;
+  margin:6px 0 0;
+  line-height:1.35
+}
+.eventScore{
+  width:62px;
+  min-width:62px;
+  height:66px
+}
+.eventScore strong{font-size:23px}
+.eventScore small{font-size:9px}
+.priorityBadge{
+  display:inline-flex;
+  align-items:center;
+  padding:7px 10px;
+  border-radius:999px;
+  font-size:11px;
+  font-weight:800;
+  white-space:nowrap
+}
+.priorityBadge.red{
+  background:#351718;
+  color:#ff9b96
+}
+.priorityBadge.yellow{
+  background:#372d12;
+  color:#ffd466
+}
+.priorityBadge.green{
+  background:#122b1a;
+  color:var(--green)
+}
+.eventMetrics{
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  gap:9px;
+  margin-top:15px
+}
+.eventMetrics>div{
+  padding:11px;
+  border-radius:13px;
+  background:#17171d;
+  border:1px solid var(--line)
+}
+.eventMetrics span,
+.eventMetrics b,
+.eventMetrics small{
+  display:block
+}
+.eventMetrics span{
+  color:var(--muted);
+  font-size:10px
+}
+.eventMetrics b{
+  margin-top:5px;
+  font-size:13px
+}
+.eventMetrics small{
+  margin-top:4px;
+  font-size:11px
+}
+.aiSummary{
+  margin-top:13px;
+  padding:14px;
+  border-radius:14px;
+  background:#111116;
+  border:1px solid var(--line)
+}
+.aiSummary span{
+  color:var(--blue);
+  font-size:11px;
+  font-weight:800
+}
+.aiSummary p{
+  margin:6px 0 0;
+  color:var(--text);
+  font-size:13px;
+  line-height:1.6
+}
+.eventAdvice{
+  margin-top:12px;
+  padding:13px;
+  border-radius:14px
+}
+.eventAdvice b,
+.eventAdvice span{
+  display:block
+}
+.eventAdvice b{font-size:13px}
+.eventAdvice span{
+  margin-top:5px;
+  color:var(--muted);
+  font-size:12px;
+  line-height:1.5
+}
+.eventAdvice.red{background:#261314}
+.eventAdvice.yellow{background:#28220f}
+.eventAdvice.green{background:#102318}
+.sourceRow{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-top:13px;
+  padding-top:13px;
+  border-top:1px solid var(--line)
+}
+.sourceRow span,
+.sourceRow b,
+.sourceRow small{
+  display:block
+}
+.sourceRow>div>span{
+  color:var(--muted);
+  font-size:10px
+}
+.sourceRow>div>b{
+  margin-top:4px;
+  font-size:13px
+}
+.sourceRow>div>small{
+  margin-top:3px;
+  font-size:10px
+}
+.sourceButton{
+  display:inline-flex;
+  padding:9px 11px;
+  border-radius:11px;
+  background:#15283c;
+  color:#76baff;
+  font-size:11px;
+  font-weight:800;
+  text-decoration:none
+}
+.sourceUnavailable{
+  color:var(--muted);
+  font-size:10px
+}
+.explainChain{
+  margin-top:12px;
+  border-radius:14px;
+  background:#0f0f14;
+  border:1px solid var(--line);
+  padding:0 13px
+}
+.explainChain summary{
+  padding:12px 0;
+  cursor:pointer;
+  font-size:12px;
+  font-weight:800
+}
+.breakdownRow{
+  display:flex;
+  justify-content:space-between;
+  padding:9px 0;
+  border-top:1px solid var(--line);
+  font-size:12px
+}
+.breakdownRow span{color:var(--muted)}
+.breakdownRow.total b{color:var(--blue)}
+.explainChain>small{
+  padding:10px 0 13px;
+  line-height:1.5
+}
+.eventFooter{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:10px;
+  margin-top:12px
+}
+.readBadge{
+  color:var(--green);
+  font-size:11px;
+  font-weight:800
+}
+@media(max-width:600px){
+  .eventMetrics{
+    grid-template-columns:1fr 1fr
+  }
+}
+@media(max-width:470px){
+  .eventTopLine{
+    grid-template-columns:auto minmax(0,1fr)
+  }
+  .priorityBadge{
+    grid-column:1 / -1;
+    justify-self:start
+  }
+  .eventMetrics{
+    grid-template-columns:1fr
+  }
+  .sourceRow,
+  .eventFooter{
+    align-items:flex-start;
+    flex-direction:column
+  }
+}

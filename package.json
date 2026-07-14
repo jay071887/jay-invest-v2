@@ -1,6 +1,6 @@
 {
-  "name": "jay-invest-v5-alpha2-1-portfolio-intelligence",
-  "version": "5.0.0-alpha.2.1",
+  "name": "jay-invest-v5-alpha2-2-complete-event-cards",
+  "version": "5.0.0-alpha.2.2",
   "private": true,
   "scripts": {
     "dev": "next dev",

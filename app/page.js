@@ -53,6 +53,38 @@ const signedMoney = (value) => {
   return `${n > 0 ? "+" : ""}${money(n)}`;
 };
 
+const importanceLabel = (score) => {
+  const n = Number(score) || 0;
+  if (n >= 90) return "非常重要";
+  if (n >= 70) return "高重要";
+  if (n >= 40) return "中等";
+  return "低重要";
+};
+
+const confidenceLabel = (confidence) => {
+  const n = Number(confidence) || 0;
+  if (n >= 90) return "高可信";
+  if (n >= 70) return "中高可信";
+  if (n >= 50) return "可信度普通";
+  return "需再查證";
+};
+
+const starRating = (value) => {
+  const stars = Math.max(
+    1,
+    Math.min(5, Math.ceil((Number(value) || 0) / 20))
+  );
+  return `${"★".repeat(stars)}${"☆".repeat(5 - stars)}`;
+};
+
+const readMinutes = (score) => {
+  const n = Number(score) || 0;
+  if (n >= 90) return 3;
+  if (n >= 70) return 2;
+  if (n >= 40) return 1;
+  return 0;
+};
+
 function cloneDefaultData() {
   return JSON.parse(JSON.stringify(DEFAULT_DATA));
 }
@@ -908,6 +940,108 @@ export default function Home() {
         };
 
 
+
+  const holdingSymbolSet = new Set(
+    (data.holdings || [])
+      .filter((holding) => Number(holding.shares) > 0)
+      .map((holding) => String(holding.symbol || "").trim())
+      .filter(Boolean)
+  );
+
+  function getPortfolioImpact(event) {
+    if (event.symbol && holdingSymbolSet.has(event.symbol)) {
+      return {
+        score: Math.min(100, Math.max(80, Number(event.score) || 0)),
+        label: "直接影響持股",
+        tone: "high"
+      };
+    }
+
+    if (!event.symbol || event.symbol === "MARKET") {
+      return {
+        score: Math.max(40, Math.min(75, Number(event.score) || 0)),
+        label: "影響整體市場",
+        tone: "medium"
+      };
+    }
+
+    return {
+      score: 20,
+      label: "非目前持股",
+      tone: "low"
+    };
+  }
+
+  function getEventRecommendation(event) {
+    const impact = getPortfolioImpact(event);
+    const score = Number(event.score) || 0;
+
+    if (impact.score >= 80 && score >= 80) {
+      return {
+        title: "今天建議閱讀",
+        detail: "屬於高重要性且直接影響持股的事件，建議查看來源並重新檢視投資假設。",
+        tone: "red"
+      };
+    }
+
+    if (impact.score >= 60 || score >= 60) {
+      return {
+        title: "值得關注",
+        detail: "目前不足以直接改變策略，但建議花幾分鐘了解事件內容。",
+        tone: "yellow"
+      };
+    }
+
+    return {
+      title: "了解即可",
+      detail: "目前對投資組合影響有限，不需要立即操作。",
+      tone: "green"
+    };
+  }
+
+  function getScoreBreakdown(event) {
+    const officialPoints =
+      event.source_type === "official"
+        ? 35
+        : event.source_type === "reliable_media"
+        ? 22
+        : 10;
+
+    const typePoints =
+      event.event_type === "material_announcement"
+        ? 35
+        : event.event_type === "investor_conference"
+        ? 30
+        : event.event_type === "earnings"
+        ? 28
+        : event.event_type === "monthly_revenue"
+        ? 22
+        : event.event_type === "unusual_price"
+        ? 16
+        : 10;
+
+    const confidencePoints = Math.round(
+      (Number(event.confidence) || 0) * 0.2
+    );
+
+    const portfolioPoints =
+      getPortfolioImpact(event).score >= 80 ? 20 : 8;
+
+    const raw =
+      officialPoints +
+      typePoints +
+      confidencePoints +
+      portfolioPoints;
+
+    return {
+      officialPoints,
+      typePoints,
+      confidencePoints,
+      portfolioPoints,
+      total: Math.min(100, raw)
+    };
+  }
+
   const strategyForDecision = {
     ...cloneDefaultData().strategies,
     ...(data.strategies || {})
@@ -952,7 +1086,7 @@ export default function Home() {
       <header className="topbar">
         <div>
           <h1>Jay Invest</h1>
-          <p>V5 Alpha 2.1・Portfolio Intelligence</p>
+          <p>V5 Alpha 2.2・Complete Event Cards</p>
         </div>
         <div className="topActions">
           <button
@@ -1059,39 +1193,161 @@ export default function Home() {
           </div>
         ) : (
           <div className="eventList">
-            {events.slice(0, 20).map((event) => (
-              <article
-                className={`eventItem ${event.watch_level} ${
-                  event.is_read ? "read" : ""
-                }`}
-                key={event.id}
-              >
-                <div className="eventScore">
-                  <strong>{event.score}</strong>
-                  <small>{event.confidence}%</small>
-                </div>
-                <div className="eventContent">
-                  <div className="eventTitle">
-                    <b>{event.symbol || "市場"}</b>
-                    <span>{event.rule_label}</span>
-                  </div>
-                  <h3>{event.title}</h3>
-                  {event.summary && <p>{event.summary}</p>}
-                  <small>
-                    {event.source_name || "未知來源"}・
-                    {new Date(event.event_time).toLocaleString("zh-TW")}
-                  </small>
-                  {!event.is_read && (
-                    <button
-                      className="textButton"
-                      onClick={() => markEventRead(event.id)}
+            {events.slice(0, 20).map((event) => {
+              const impact = getPortfolioImpact(event);
+              const recommendation = getEventRecommendation(event);
+              const breakdown = getScoreBreakdown(event);
+
+              return (
+                <article
+                  className={`eventItem ${event.watch_level} ${
+                    event.is_read ? "read" : ""
+                  }`}
+                  key={event.id}
+                >
+                  <div className="eventTopLine">
+                    <div className="eventScore">
+                      <strong>{event.score}</strong>
+                      <small>重要分數</small>
+                    </div>
+
+                    <div className="eventIdentity">
+                      <div className="eventTitle">
+                        <b>{event.symbol || "市場"}</b>
+                        <span>{event.rule_label}</span>
+                      </div>
+                      <h3>{event.title}</h3>
+                    </div>
+
+                    <span
+                      className={`priorityBadge ${recommendation.tone}`}
                     >
-                      標記已讀
-                    </button>
+                      {recommendation.title}
+                    </span>
+                  </div>
+
+                  <div className="eventMetrics">
+                    <div>
+                      <span>事件重要性</span>
+                      <b>{importanceLabel(event.score)}</b>
+                      <small>{starRating(event.score)}</small>
+                    </div>
+
+                    <div>
+                      <span>資料可信度</span>
+                      <b>{confidenceLabel(event.confidence)}</b>
+                      <small>{event.confidence}%</small>
+                    </div>
+
+                    <div>
+                      <span>對我的影響</span>
+                      <b>{impact.label}</b>
+                      <small>{starRating(impact.score)}</small>
+                    </div>
+
+                    <div>
+                      <span>建議閱讀時間</span>
+                      <b>{readMinutes(event.score)} 分鐘</b>
+                      <small>
+                        {event.score >= 70 ? "今天閱讀" : "有空再看"}
+                      </small>
+                    </div>
+                  </div>
+
+                  {event.summary && (
+                    <div className="aiSummary">
+                      <span>AI 摘要</span>
+                      <p>{event.summary}</p>
+                    </div>
                   )}
-                </div>
-              </article>
-            ))}
+
+                  <div className={`eventAdvice ${recommendation.tone}`}>
+                    <b>{recommendation.title}</b>
+                    <span>{recommendation.detail}</span>
+                  </div>
+
+                  <div className="sourceRow">
+                    <div>
+                      <span>來源</span>
+                      <b>{event.source_name || "未知來源"}</b>
+                      <small>
+                        {event.source_type === "official"
+                          ? "官方資料"
+                          : event.source_type === "reliable_media"
+                          ? "可信媒體"
+                          : "尚待查證"}
+                      </small>
+                    </div>
+
+                    {event.source_url ? (
+                      <a
+                        href={event.source_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="sourceButton"
+                      >
+                        查看原始來源
+                      </a>
+                    ) : (
+                      <span className="sourceUnavailable">
+                        模擬資料，無外部連結
+                      </span>
+                    )}
+                  </div>
+
+                  <details className="explainChain">
+                    <summary>查看 AI 評分原因</summary>
+
+                    <div className="breakdownRow">
+                      <span>來源類型</span>
+                      <b>+{breakdown.officialPoints}</b>
+                    </div>
+
+                    <div className="breakdownRow">
+                      <span>事件類型</span>
+                      <b>+{breakdown.typePoints}</b>
+                    </div>
+
+                    <div className="breakdownRow">
+                      <span>可信度</span>
+                      <b>+{breakdown.confidencePoints}</b>
+                    </div>
+
+                    <div className="breakdownRow">
+                      <span>投資組合關聯</span>
+                      <b>+{breakdown.portfolioPoints}</b>
+                    </div>
+
+                    <div className="breakdownRow total">
+                      <span>綜合重要性</span>
+                      <b>{event.score} / 100</b>
+                    </div>
+
+                    <small>
+                      此為事件關注分數，不代表上漲機率，也不是買賣建議。
+                    </small>
+                  </details>
+
+                  <div className="eventFooter">
+                    <small>
+                      更新時間：
+                      {new Date(event.event_time).toLocaleString("zh-TW")}
+                    </small>
+
+                    {!event.is_read ? (
+                      <button
+                        className="textButton"
+                        onClick={() => markEventRead(event.id)}
+                      >
+                        標記已讀
+                      </button>
+                    ) : (
+                      <span className="readBadge">已讀</span>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
           </div>
         )}
       </section>
