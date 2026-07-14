@@ -26,10 +26,16 @@ const DEFAULT_DATA = {
     taiexHigh: 0,
     goal: 3000000,
     brokerageDiscount: 2,
-    minimumFee: 20
+    minimumFee: 20,
+    recurringSymbol: "009816",
+    recurringAmount: 4000,
+    recurringDays: [7, 14, 21, 28],
+    recurringNote: "每月固定分批投入，其餘資金保留現金。",
+    reserveCash: 0
   },
   snapshots: [],
   transactions: [],
+  cashLedger: [],
   executedTier: "",
   strategies: {
     recurring009816: true,
@@ -97,6 +103,14 @@ const decisionActionText = (status) => {
   return "今天不需要變動";
 };
 
+const recurringDaysText = (days = []) =>
+  [...days]
+    .map(Number)
+    .filter((day) => day >= 1 && day <= 31)
+    .sort((a, b) => a - b)
+    .map((day) => `${day} 日`)
+    .join("、");
+
 function cloneDefaultData() {
   return JSON.parse(JSON.stringify(DEFAULT_DATA));
 }
@@ -127,10 +141,13 @@ export default function Home() {
     confidence: 100
   });
   const [trade, setTrade] = useState({
-    symbol: "009816",
+    type: "buy",
+    symbol: "",
     shares: 0,
     price: 0,
-    date: new Date().toISOString().slice(0, 10)
+    date: new Date().toISOString().slice(0, 10),
+    cashAmount: 0,
+    note: ""
   });
   const [tradeMessage, setTradeMessage] = useState("");
   const saveTimer = useRef(null);
@@ -215,6 +232,9 @@ export default function Home() {
         },
         transactions: Array.isArray(row.data.transactions)
           ? row.data.transactions
+          : [],
+        cashLedger: Array.isArray(row.data.cashLedger)
+          ? row.data.cashLedger
           : []
       });
       setCloudStatus("已從雲端同步");
@@ -270,7 +290,8 @@ export default function Home() {
         snapshots: snapshots ? JSON.parse(snapshots) : [],
         executedTier: executedTier || "",
         strategies: cloneDefaultData().strategies,
-        transactions: []
+        transactions: [],
+        cashLedger: []
       };
     } catch {
       return null;
@@ -797,10 +818,8 @@ export default function Home() {
     const shares = Number(trade.shares) || 0;
     const price = Number(trade.price) || 0;
     const amount = shares * price;
-    const discount = Math.max(
-      0,
-      Number(data.settings.brokerageDiscount) || 0
-    ) / 10;
+    const discount =
+      Math.max(0, Number(data.settings.brokerageDiscount) || 0) / 10;
     const calculatedFee = amount * 0.001425 * discount;
     const fee =
       amount > 0
@@ -809,13 +828,31 @@ export default function Home() {
             Math.round(calculatedFee)
           )
         : 0;
-    const totalCost = amount + fee;
+    const tax =
+      trade.type === "sell"
+        ? Math.round(amount * 0.003)
+        : 0;
+    const cashChange =
+      trade.type === "buy"
+        ? -(amount + fee)
+        : trade.type === "sell"
+        ? amount - fee - tax
+        : trade.type === "cash_in"
+        ? Number(trade.cashAmount) || 0
+        : -(Number(trade.cashAmount) || 0);
 
     return {
       amount,
       fee,
-      totalCost,
-      effectiveUnitCost: shares > 0 ? totalCost / shares : 0
+      tax,
+      cashChange,
+      settlementAmount: Math.abs(cashChange),
+      effectiveUnitCost:
+        shares > 0 && trade.type === "buy"
+          ? (amount + fee) / shares
+          : shares > 0 && trade.type === "sell"
+          ? (amount - fee - tax) / shares
+          : 0
     };
   }, [
     trade,
@@ -823,88 +860,308 @@ export default function Home() {
     data.settings.minimumFee
   ]);
 
-  function addBuyTransaction() {
+  const investableCash = Math.max(
+    0,
+    Number(data.settings.investmentCash || 0) -
+      Number(data.settings.reserveCash || 0)
+  );
+
+  const projectedCash =
+    Number(data.settings.investmentCash || 0) +
+    tradePreview.cashChange;
+
+  const projectedInvestableCash = Math.max(
+    0,
+    projectedCash - Number(data.settings.reserveCash || 0)
+  );
+
+  function recalculateHoldingFromTransactions(symbol, transactions) {
+    const relevant = transactions
+      .filter(
+        (item) =>
+          item.symbol === symbol &&
+          ["buy", "sell"].includes(item.type)
+      )
+      .sort(
+        (a, b) =>
+          new Date(a.createdAt || a.date) -
+          new Date(b.createdAt || b.date)
+      );
+
+    let shares = 0;
+    let costBasis = 0;
+
+    for (const item of relevant) {
+      const qty = Number(item.shares) || 0;
+
+      if (item.type === "buy") {
+        shares += qty;
+        costBasis += Number(item.totalCost) || 0;
+      } else if (item.type === "sell" && shares > 0) {
+        const sellQty = Math.min(qty, shares);
+        const averageCost = costBasis / shares;
+        costBasis -= averageCost * sellQty;
+        shares -= sellQty;
+      }
+    }
+
+    return {
+      shares,
+      averageCost: shares > 0 ? costBasis / shares : 0
+    };
+  }
+
+  function rebuildHoldingsFromTransactions(transactions, currentHoldings) {
+    const symbols = [
+      ...new Set(
+        transactions
+          .filter((item) => item.symbol)
+          .map((item) => item.symbol)
+      )
+    ];
+
+    const currentMap = Object.fromEntries(
+      currentHoldings.map((holding) => [holding.symbol, holding])
+    );
+
+    return symbols
+      .map((symbol) => {
+        const result = recalculateHoldingFromTransactions(
+          symbol,
+          transactions
+        );
+
+        return {
+          id: currentMap[symbol]?.id || crypto.randomUUID(),
+          symbol,
+          shares: result.shares,
+          averageCost: Number(result.averageCost.toFixed(6))
+        };
+      })
+      .filter((holding) => holding.shares > 0);
+  }
+
+  function submitTransaction() {
+    const type = trade.type;
+    const now = new Date().toISOString();
+    const currentCash = Number(data.settings.investmentCash) || 0;
+
+    if (["cash_in", "cash_out"].includes(type)) {
+      const amount = Number(trade.cashAmount) || 0;
+
+      if (amount <= 0) {
+        setTradeMessage("請輸入現金金額。");
+        return;
+      }
+
+      if (type === "cash_out" && amount > currentCash) {
+        setTradeMessage("現金不足，無法登錄這筆支出。");
+        return;
+      }
+
+      const transaction = {
+        id: crypto.randomUUID(),
+        type,
+        date: trade.date,
+        cashChange: tradePreview.cashChange,
+        note: trade.note || (type === "cash_in" ? "現金收入" : "現金支出"),
+        createdAt: now
+      };
+
+      setData({
+        ...data,
+        settings: {
+          ...data.settings,
+          investmentCash: currentCash + tradePreview.cashChange
+        },
+        transactions: [
+          transaction,
+          ...(data.transactions || [])
+        ],
+        cashLedger: [
+          {
+            id: crypto.randomUUID(),
+            transactionId: transaction.id,
+            type,
+            amount: tradePreview.cashChange,
+            balanceAfter: currentCash + tradePreview.cashChange,
+            note: transaction.note,
+            date: trade.date,
+            createdAt: now
+          },
+          ...(data.cashLedger || [])
+        ]
+      });
+
+      setTradeMessage(
+        `${type === "cash_in" ? "現金收入" : "現金支出"}已登錄，現金餘額自動更新。`
+      );
+
+      setTrade({
+        ...trade,
+        cashAmount: 0,
+        note: ""
+      });
+      return;
+    }
+
     const symbol = trade.symbol.trim();
     const shares = Math.floor(Number(trade.shares) || 0);
     const price = Number(trade.price) || 0;
 
     if (!symbol || shares <= 0 || price <= 0) {
-      setTradeMessage("請輸入股票代號、買進股數與成交價格。");
+      setTradeMessage("請輸入股票代號、股數與成交價格。");
       return;
     }
 
-    const existingIndex = data.holdings.findIndex(
+    const existingHolding = (data.holdings || []).find(
       (holding) => holding.symbol === symbol
     );
-    const nextHoldings = [...data.holdings];
 
-    if (existingIndex >= 0) {
-      const existing = nextHoldings[existingIndex];
-      const oldShares = Number(existing.shares) || 0;
-      const oldCostBasis =
-        oldShares * (Number(existing.averageCost) || 0);
-      const newShares = oldShares + shares;
-      const newAverageCost =
-        (oldCostBasis + tradePreview.totalCost) / newShares;
-
-      nextHoldings[existingIndex] = {
-        ...existing,
-        shares: newShares,
-        averageCost: Number(newAverageCost.toFixed(6))
-      };
-    } else {
-      nextHoldings.push({
-        id: crypto.randomUUID(),
-        symbol,
-        shares,
-        averageCost: Number(
-          tradePreview.effectiveUnitCost.toFixed(6)
-        )
-      });
+    if (type === "sell") {
+      if (!existingHolding || Number(existingHolding.shares) < shares) {
+        setTradeMessage("賣出股數超過目前庫存。");
+        return;
+      }
     }
+
+    if (type === "buy" && currentCash + tradePreview.cashChange < 0) {
+      setTradeMessage("可用現金不足，無法完成這筆買進。");
+      return;
+    }
+
+    const averageCostBefore =
+      Number(existingHolding?.averageCost) || 0;
+    const realizedPnl =
+      type === "sell"
+        ? tradePreview.cashChange -
+          shares * averageCostBefore
+        : 0;
 
     const transaction = {
       id: crypto.randomUUID(),
-      type: "buy",
+      type,
       symbol,
       shares,
       price,
       amount: tradePreview.amount,
       fee: tradePreview.fee,
-      totalCost: tradePreview.totalCost,
+      tax: tradePreview.tax,
+      totalCost:
+        type === "buy"
+          ? tradePreview.amount + tradePreview.fee
+          : 0,
+      netProceeds:
+        type === "sell"
+          ? tradePreview.cashChange
+          : 0,
+      cashChange: tradePreview.cashChange,
+      realizedPnl,
+      averageCostBefore,
       date: trade.date,
-      createdAt: new Date().toISOString()
+      note: trade.note,
+      createdAt: now
     };
+
+    const nextTransactions = [
+      transaction,
+      ...(data.transactions || [])
+    ];
+
+    const nextHoldings = rebuildHoldingsFromTransactions(
+      nextTransactions,
+      data.holdings || []
+    );
+
+    const nextCash = currentCash + tradePreview.cashChange;
 
     setData({
       ...data,
+      settings: {
+        ...data.settings,
+        investmentCash: nextCash
+      },
       holdings: nextHoldings,
-      transactions: [
-        transaction,
-        ...(data.transactions || [])
-      ].slice(0, 500)
+      transactions: nextTransactions,
+      cashLedger: [
+        {
+          id: crypto.randomUUID(),
+          transactionId: transaction.id,
+          type,
+          symbol,
+          amount: tradePreview.cashChange,
+          balanceAfter: nextCash,
+          note:
+            trade.note ||
+            `${type === "buy" ? "買進" : "賣出"} ${symbol}`,
+          date: trade.date,
+          createdAt: now
+        },
+        ...(data.cashLedger || [])
+      ]
     });
 
     setTradeMessage(
-      `已買進 ${symbol} ${shares.toLocaleString(
-        "zh-TW"
-      )} 股，庫存與均價已自動更新。`
+      type === "buy"
+        ? `已買進 ${symbol} ${shares.toLocaleString("zh-TW")} 股，現金、庫存與均價已同步更新。`
+        : `已賣出 ${symbol} ${shares.toLocaleString("zh-TW")} 股，現金與已實現損益已同步更新。`
     );
 
     setTrade({
       ...trade,
+      symbol: "",
       shares: 0,
-      price: 0
+      price: 0,
+      note: ""
     });
   }
 
-  function deleteTransaction(transactionId) {
+  function undoTransaction(transactionId) {
+    const transaction = (data.transactions || []).find(
+      (item) => item.id === transactionId
+    );
+
+    if (!transaction) return;
+
+    const nextTransactions = (data.transactions || []).filter(
+      (item) => item.id !== transactionId
+    );
+
+    const nextHoldings = rebuildHoldingsFromTransactions(
+      nextTransactions,
+      data.holdings || []
+    );
+
+    const currentCash = Number(data.settings.investmentCash) || 0;
+    const revertedCash =
+      currentCash - Number(transaction.cashChange || 0);
+
     setData({
       ...data,
-      transactions: (data.transactions || []).filter(
-        (transaction) => transaction.id !== transactionId
-      )
+      settings: {
+        ...data.settings,
+        investmentCash: revertedCash
+      },
+      holdings: nextHoldings,
+      transactions: nextTransactions,
+      cashLedger: [
+        {
+          id: crypto.randomUUID(),
+          transactionId,
+          type: "undo",
+          amount: -Number(transaction.cashChange || 0),
+          balanceAfter: revertedCash,
+          note: `復原交易：${
+            transaction.symbol || transaction.note || transaction.type
+          }`,
+          date: new Date().toISOString().slice(0, 10),
+          createdAt: new Date().toISOString()
+        },
+        ...(data.cashLedger || [])
+      ]
     });
+
+    setTradeMessage("交易已復原，現金、庫存與均價已重新計算。");
   }
 
   const strategy = {
@@ -1054,6 +1311,37 @@ export default function Home() {
     };
   }
 
+
+  const realizedPnlTotal = (data.transactions || [])
+    .filter((item) => item.type === "sell")
+    .reduce(
+      (sum, item) => sum + Number(item.realizedPnl || 0),
+      0
+    );
+
+  const sellTransactions = (data.transactions || []).filter(
+    (item) => item.type === "sell"
+  );
+
+  const profitableTrades = sellTransactions.filter(
+    (item) => Number(item.realizedPnl || 0) > 0
+  ).length;
+
+  const winRate =
+    sellTransactions.length > 0
+      ? (profitableTrades / sellTransactions.length) * 100
+      : 0;
+
+  const cashUsageRate =
+    Number(data.settings.investmentCash || 0) +
+      computed.stockValue >
+    0
+      ? (computed.stockValue /
+          (Number(data.settings.investmentCash || 0) +
+            computed.stockValue)) *
+        100
+      : 0;
+
   const strategyForDecision = {
     ...cloneDefaultData().strategies,
     ...(data.strategies || {})
@@ -1155,7 +1443,7 @@ export default function Home() {
       <header className="topbar">
         <div>
           <h1>Jay Invest</h1>
-          <p>V5 Alpha 2.3・Decision First</p>
+          <p>V5 Alpha 3.3・Cash Engine</p>
         </div>
         <div className="topActions">
           <button
@@ -1237,8 +1525,8 @@ export default function Home() {
           <b>你的目前策略</b>
           <span>
             {strategyForDecision.recurring009816
-              ? "009816 定期投入持續；"
-              : "009816 定期投入暫停；"}
+              ? `${data.settings.recurringSymbol || "未設定標的"} 定期投入持續；`
+              : `${data.settings.recurringSymbol || "定期定額"} 暫停；`}
             {strategyForDecision.goldBuying
               ? "黃金買進開啟；"
               : "黃金維持持有、不新增；"}
@@ -1751,74 +2039,191 @@ export default function Home() {
       <section className="card">
         <div className="sectionHeader">
           <div>
-            <h2>買進登錄</h2>
-            <small>輸入成交資料後，自動計算手續費、加入庫存並重算均價。</small>
+            <h2>Cash Engine｜新增交易</h2>
+            <small>
+              買進、賣出、收入與支出都會自動更新現金、庫存、均價及損益。
+            </small>
           </div>
-          <span className="modeBadge">
-            {data.settings.brokerageDiscount} 折
-          </span>
+          <span className="modeBadge">V3.3</span>
         </div>
 
-        <div className="tradeGrid">
-          <Field
-            label="股票代號"
-            value={trade.symbol}
-            onChange={(value) =>
-              setTrade({ ...trade, symbol: value.trim() })
-            }
-          />
-          <Field
-            label="買進日期"
-            type="date"
-            value={trade.date}
-            onChange={(value) =>
-              setTrade({ ...trade, date: value })
-            }
-          />
-          <Field
-            label="成交股數"
-            type="number"
-            value={trade.shares}
-            onChange={(value) =>
-              setTrade({ ...trade, shares: Number(value) })
-            }
-          />
-          <Field
-            label="成交價格"
-            type="number"
-            step="0.01"
-            value={trade.price}
-            onChange={(value) =>
-              setTrade({ ...trade, price: Number(value) })
-            }
-          />
+        <div className="tradeTypeTabs">
+          {[
+            ["buy", "買進"],
+            ["sell", "賣出"],
+            ["cash_in", "現金收入"],
+            ["cash_out", "現金支出"]
+          ].map(([value, label]) => (
+            <button
+              key={value}
+              className={trade.type === value ? "active" : ""}
+              onClick={() =>
+                setTrade({
+                  ...trade,
+                  type: value,
+                  symbol: "",
+                  shares: 0,
+                  price: 0,
+                  cashAmount: 0,
+                  note: ""
+                })
+              }
+            >
+              {label}
+            </button>
+          ))}
         </div>
 
-        <div className="costPreview">
-          <Row
-            label="成交金額"
-            value={money(tradePreview.amount)}
-          />
-          <Row
-            label={`買進手續費（${data.settings.brokerageDiscount} 折）`}
-            value={money(tradePreview.fee)}
-          />
-          <Row
-            label="交割總成本"
-            value={money(tradePreview.totalCost)}
-          />
-          <Row
-            label="含手續費單位成本"
-            value={
-              tradePreview.effectiveUnitCost
-                ? tradePreview.effectiveUnitCost.toFixed(4)
-                : "0"
-            }
-          />
+        <div className="cashEngineSummary">
+          <div>
+            <span>現金餘額</span>
+            <b>{money(data.settings.investmentCash)}</b>
+          </div>
+          <div>
+            <span>保留現金</span>
+            <b>{money(data.settings.reserveCash)}</b>
+          </div>
+          <div>
+            <span>可投資現金</span>
+            <b>{money(investableCash)}</b>
+          </div>
+          <div>
+            <span>交易後可投資</span>
+            <b
+              className={
+                projectedInvestableCash <= 0 ? "down" : "up"
+              }
+            >
+              {money(projectedInvestableCash)}
+            </b>
+          </div>
         </div>
 
-        <button className="tradeButton" onClick={addBuyTransaction}>
-          加入庫存並更新均價
+        {["buy", "sell"].includes(trade.type) ? (
+          <>
+            <div className="tradeGrid">
+              <Field
+                label="股票代號"
+                value={trade.symbol}
+                onChange={(value) =>
+                  setTrade({
+                    ...trade,
+                    symbol: value.trim()
+                  })
+                }
+              />
+              <Field
+                label="交易日期"
+                type="date"
+                value={trade.date}
+                onChange={(value) =>
+                  setTrade({ ...trade, date: value })
+                }
+              />
+              <Field
+                label="成交股數"
+                type="number"
+                value={trade.shares}
+                onChange={(value) =>
+                  setTrade({
+                    ...trade,
+                    shares: Number(value)
+                  })
+                }
+              />
+              <Field
+                label="成交價格"
+                type="number"
+                step="0.01"
+                value={trade.price}
+                onChange={(value) =>
+                  setTrade({
+                    ...trade,
+                    price: Number(value)
+                  })
+                }
+              />
+            </div>
+
+            <div className="costPreview">
+              <Row
+                label="成交金額"
+                value={money(tradePreview.amount)}
+              />
+              <Row
+                label={`手續費（${data.settings.brokerageDiscount} 折）`}
+                value={money(tradePreview.fee)}
+              />
+              {trade.type === "sell" && (
+                <Row
+                  label="證券交易稅"
+                  value={money(tradePreview.tax)}
+                />
+              )}
+              <Row
+                label={
+                  trade.type === "buy"
+                    ? "交割扣款"
+                    : "賣出入帳"
+                }
+                value={money(tradePreview.settlementAmount)}
+              />
+              <Row
+                label="含費用單位金額"
+                value={
+                  tradePreview.effectiveUnitCost
+                    ? tradePreview.effectiveUnitCost.toFixed(4)
+                    : "0"
+                }
+              />
+            </div>
+          </>
+        ) : (
+          <div className="tradeGrid">
+            <Field
+              label="金額"
+              type="number"
+              value={trade.cashAmount}
+              onChange={(value) =>
+                setTrade({
+                  ...trade,
+                  cashAmount: Number(value)
+                })
+              }
+            />
+            <Field
+              label="日期"
+              type="date"
+              value={trade.date}
+              onChange={(value) =>
+                setTrade({ ...trade, date: value })
+              }
+            />
+          </div>
+        )}
+
+        <label className="fullWidthField transactionNote">
+          <span>備註</span>
+          <input
+            value={trade.note}
+            placeholder="例如：每月薪資、定期定額、波段交易"
+            onChange={(event) =>
+              setTrade({
+                ...trade,
+                note: event.target.value
+              })
+            }
+          />
+        </label>
+
+        <button className="tradeButton" onClick={submitTransaction}>
+          {trade.type === "buy"
+            ? "完成買進並扣除現金"
+            : trade.type === "sell"
+            ? "完成賣出並加回現金"
+            : trade.type === "cash_in"
+            ? "新增現金收入"
+            : "新增現金支出"}
         </button>
 
         {tradeMessage && (
@@ -1959,14 +2364,20 @@ export default function Home() {
       </section>
 
       <section className="card">
-        <h2>最近買進紀錄</h2>
+        <div className="sectionHeader">
+          <div>
+            <h2>交易與現金紀錄</h2>
+            <small>輸入錯誤時可直接復原，系統會重算現金、庫存與均價。</small>
+          </div>
+        </div>
+
         {(data.transactions || []).length === 0 ? (
           <div className="empty smallEmpty">
-            尚未新增買進紀錄。
+            尚未新增交易。
           </div>
         ) : (
           <div className="transactionList">
-            {(data.transactions || []).slice(0, 20).map(
+            {(data.transactions || []).slice(0, 30).map(
               (transaction) => (
                 <div
                   className="transactionItem"
@@ -1974,27 +2385,64 @@ export default function Home() {
                 >
                   <div>
                     <b>
-                      {transaction.symbol}・買進{" "}
-                      {Number(
-                        transaction.shares
-                      ).toLocaleString("zh-TW")}{" "}
-                      股
+                      {transaction.type === "buy"
+                        ? "買進"
+                        : transaction.type === "sell"
+                        ? "賣出"
+                        : transaction.type === "cash_in"
+                        ? "現金收入"
+                        : "現金支出"}
+                      {transaction.symbol
+                        ? `・${transaction.symbol}`
+                        : ""}
                     </b>
                     <small>
-                      {transaction.date}｜成交價{" "}
-                      {Number(transaction.price).toFixed(2)}
-                      ｜手續費 {money(transaction.fee)}
+                      {transaction.date}
+                      {transaction.shares
+                        ? `｜${Number(
+                            transaction.shares
+                          ).toLocaleString("zh-TW")} 股`
+                        : ""}
+                      {transaction.price
+                        ? `｜成交價 ${Number(
+                            transaction.price
+                          ).toFixed(2)}`
+                        : ""}
                     </small>
+                    {transaction.note && (
+                      <small>{transaction.note}</small>
+                    )}
                   </div>
+
                   <div className="transactionRight">
-                    <b>{money(transaction.totalCost)}</b>
+                    <b
+                      className={
+                        Number(transaction.cashChange) >= 0
+                          ? "up"
+                          : "down"
+                      }
+                    >
+                      {signedMoney(transaction.cashChange)}
+                    </b>
+                    {transaction.type === "sell" && (
+                      <small
+                        className={
+                          Number(transaction.realizedPnl) >= 0
+                            ? "up"
+                            : "down"
+                        }
+                      >
+                        已實現：
+                        {signedMoney(transaction.realizedPnl)}
+                      </small>
+                    )}
                     <button
                       className="deleteText"
                       onClick={() =>
-                        deleteTransaction(transaction.id)
+                        undoTransaction(transaction.id)
                       }
                     >
-                      刪除紀錄
+                      復原交易
                     </button>
                   </div>
                 </div>
@@ -2002,9 +2450,42 @@ export default function Home() {
             )}
           </div>
         )}
-        <small className="warningText">
-          刪除交易紀錄不會回復庫存；如輸入錯誤，請同時到持股管理修正股數與均價。
-        </small>
+      </section>
+
+      <section className="card performanceCard">
+        <h2>AI 績效與資金分析</h2>
+
+        <div className="performanceGrid">
+          <div>
+            <span>累積已實現損益</span>
+            <b className={realizedPnlTotal >= 0 ? "up" : "down"}>
+              {signedMoney(realizedPnlTotal)}
+            </b>
+          </div>
+          <div>
+            <span>賣出交易勝率</span>
+            <b>{winRate.toFixed(1)}%</b>
+          </div>
+          <div>
+            <span>股票資金使用率</span>
+            <b>{cashUsageRate.toFixed(1)}%</b>
+          </div>
+          <div>
+            <span>目前可投資現金</span>
+            <b>{money(investableCash)}</b>
+          </div>
+        </div>
+
+        <div className="cashAdvice">
+          <b>AI 資金提醒</b>
+          <span>
+            {projectedInvestableCash <= 0
+              ? "目前可投資現金已接近零，新增部位前應先補足現金。"
+              : cashUsageRate >= 80
+              ? "股票部位已使用大部分資金，新增交易前請留意流動性。"
+              : "目前仍保有可投資現金，交易前可先使用上方預估確認交易後餘額。"}
+          </span>
+        </div>
       </section>
 
       <section className="card">
@@ -2052,6 +2533,21 @@ export default function Home() {
         <p className="hint">
           例如券商 2 折請填 2；若零股最低手續費為 1 元，可自行把最低手續費改成 1。
         </p>
+
+        <Field
+          label="保留現金（不投入股票）"
+          type="number"
+          value={data.settings.reserveCash}
+          onChange={(value) =>
+            setData({
+              ...data,
+              settings: {
+                ...data.settings,
+                reserveCash: Number(value)
+              }
+            })
+          }
+        />
 
         <Field
           label="投資現金"
@@ -2154,9 +2650,89 @@ export default function Home() {
           <span className="modeBadge">穩定累積</span>
         </div>
 
+        <div className="strategyEditor">
+          <Field
+            label="定期定額標的"
+            value={data.settings.recurringSymbol}
+            onChange={(value) =>
+              setData({
+                ...data,
+                settings: {
+                  ...data.settings,
+                  recurringSymbol: value.trim()
+                }
+              })
+            }
+          />
+
+          <Field
+            label="每次投入金額"
+            type="number"
+            value={data.settings.recurringAmount}
+            onChange={(value) =>
+              setData({
+                ...data,
+                settings: {
+                  ...data.settings,
+                  recurringAmount: Number(value)
+                }
+              })
+            }
+          />
+
+          <label className="fullWidthField">
+            <span>扣款日期（用逗號分隔）</span>
+            <input
+              value={(data.settings.recurringDays || []).join(",")}
+              placeholder="例如：7,14,21,28"
+              onChange={(event) => {
+                const days = event.target.value
+                  .split(",")
+                  .map((item) => Number(item.trim()))
+                  .filter(
+                    (day) =>
+                      Number.isInteger(day) &&
+                      day >= 1 &&
+                      day <= 31
+                  );
+
+                setData({
+                  ...data,
+                  settings: {
+                    ...data.settings,
+                    recurringDays: [...new Set(days)]
+                  }
+                });
+              }}
+            />
+          </label>
+
+          <label className="fullWidthField">
+            <span>策略備註</span>
+            <textarea
+              value={data.settings.recurringNote}
+              placeholder="例如：每月固定分批投入，其餘資金保留現金。"
+              onChange={(event) =>
+                setData({
+                  ...data,
+                  settings: {
+                    ...data.settings,
+                    recurringNote: event.target.value
+                  }
+                })
+              }
+            />
+          </label>
+        </div>
+
         <StrategyToggle
-          label="009816 定期定額"
-          description="每月 7、14、21、28 日各 NT$4,000"
+          label={`${data.settings.recurringSymbol || "自訂標的"} 定期定額`}
+          description={
+            data.settings.recurringNote ||
+            `${recurringDaysText(data.settings.recurringDays)}，每次 ${money(
+              data.settings.recurringAmount
+            )}`
+          }
           checked={strategy.recurring009816}
           onChange={(checked) =>
             setData({
@@ -2248,8 +2824,8 @@ export default function Home() {
           <b>目前策略</b>
           <span>
             {strategy.recurring009816
-              ? "009816 固定投入；"
-              : "009816 定期定額暫停；"}
+              ? `${data.settings.recurringSymbol || "自訂標的"} 固定投入；`
+              : `${data.settings.recurringSymbol || "定期定額"} 暫停；`}
             {strategy.goldBuying
               ? "黃金買進開啟；"
               : "黃金維持持有、不新增；"}
@@ -2262,13 +2838,40 @@ export default function Home() {
 
       {strategy.recurring009816 && (
       <section className="card plan">
-        <h2>009816 定期定額</h2>
-        <div>7 日　NT$4,000</div>
-        <div>14 日　NT$4,000</div>
-        <div>21 日　NT$4,000</div>
-        <div>28 日　NT$4,000</div>
+        <div className="sectionHeader">
+          <div>
+            <h2>
+              {data.settings.recurringSymbol || "自訂標的"} 定期定額
+            </h2>
+            <small>以下內容可在策略中心直接修改。</small>
+          </div>
+        </div>
+
+        {(data.settings.recurringDays || []).length === 0 ? (
+          <div className="empty smallEmpty">
+            尚未設定扣款日期。
+          </div>
+        ) : (
+          [...data.settings.recurringDays]
+            .sort((a, b) => a - b)
+            .map((day) => (
+              <div key={day}>
+                {day} 日　{money(data.settings.recurringAmount)}
+              </div>
+            ))
+        )}
+
+        <small className="planNote">
+          {data.settings.recurringNote ||
+            "尚未設定策略備註。"}
+        </small>
+
         <small>
-          每月合計 NT$16,000，其餘資金保留現金。
+          每月預計投入：
+          {money(
+            Number(data.settings.recurringAmount || 0) *
+              Number((data.settings.recurringDays || []).length)
+          )}
         </small>
       </section>
       )}
