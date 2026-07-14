@@ -45,3 +45,10 @@ V6 第一版先建立穩定可部署的「財富助理」基礎，並修復先�
 7. 開啟 Vercel Preview
 
 本版不需要新增 Supabase SQL。
+
+
+## Registry 修正版
+
+本壓縮檔已將 `package-lock.json` 內的套件下載位置改為公開的 npm Registry，並加入 `.npmrc`。
+
+修正原因：前一版的 lockfile 含有內部套件閘道網址，Vercel 無法連線，因而出現 `ETIMEDOUT`。
