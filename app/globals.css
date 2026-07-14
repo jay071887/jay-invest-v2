@@ -402,3 +402,28 @@ select{
     font-size:15px
   }
 }
+
+
+/* V6.1 action decision fix */
+.simpleMarketAction{
+  margin-top:14px;
+  padding:13px;
+  border-radius:14px;
+  background:#28220f;
+  border:1px solid #6a5519
+}
+.simpleMarketAction span,
+.simpleMarketAction b{
+  display:block
+}
+.simpleMarketAction span{
+  color:var(--muted);
+  font-size:10px
+}
+.simpleMarketAction b{
+  margin-top:5px;
+  font-size:14px
+}
+.fullRebalanceRow{
+  grid-column:1 / -1
+}

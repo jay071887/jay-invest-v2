@@ -30,6 +30,7 @@ const DEFAULT_DATA = {
     rebalanceStockTarget: 60,
     rebalanceCashTarget: 40,
     rebalanceTolerance: 5,
+    balanceSymbol: "00631L",
     wealthGoalAmount: 2000000,
     wealthGoalDate: "2027-07-18",
     monthlyContribution: 30000
@@ -1268,12 +1269,43 @@ export default function Home() {
       : 0;
 
 
+  const selectedBalanceHolding = (data.holdings || []).find(
+    (holding) =>
+      String(holding.symbol || "").trim().toUpperCase() ===
+      String(
+        data.settings.balanceSymbol ||
+          data.settings.leveragedEtfSymbol ||
+          ""
+      )
+        .trim()
+        .toUpperCase()
+  );
+
+  const selectedBalanceQuote = selectedBalanceHolding
+    ? (market.stocks || []).find(
+        (item) =>
+          String(item.symbol || "").trim().toUpperCase() ===
+          String(selectedBalanceHolding.symbol || "")
+            .trim()
+            .toUpperCase()
+      )
+    : null;
+
+  const selectedBalancePrice =
+    Number(selectedBalanceQuote?.price) ||
+    Number(selectedBalanceHolding?.averageCost) ||
+    0;
+
+  const selectedBalanceValue =
+    (Number(selectedBalanceHolding?.shares) || 0) *
+    selectedBalancePrice;
+
   const rebalanceInvestableTotal =
-    computed.stockValue + investableCash;
+    selectedBalanceValue + investableCash;
 
   const currentStockRatio =
     rebalanceInvestableTotal > 0
-      ? (computed.stockValue / rebalanceInvestableTotal) * 100
+      ? (selectedBalanceValue / rebalanceInvestableTotal) * 100
       : 0;
 
   const currentCashRatio =
@@ -1297,7 +1329,7 @@ export default function Home() {
     rebalanceInvestableTotal * (stockTarget / 100);
 
   const rebalanceAmount =
-    computed.stockValue - targetStockValue;
+    selectedBalanceValue - targetStockValue;
 
   const needsRebalance =
     strategy.leveragedEtf &&
@@ -1307,6 +1339,35 @@ export default function Home() {
 
   const rebalanceDirection =
     rebalanceAmount > 0 ? "reduce_stock" : "increase_stock";
+
+  const balanceSymbol = String(
+    data.settings.balanceSymbol ||
+      data.settings.balanceSymbol ||
+      ""
+  )
+    .trim()
+    .toUpperCase();
+
+  const balanceHolding = (data.holdings || []).find(
+    (holding) =>
+      String(holding.symbol || "").trim().toUpperCase() ===
+        balanceSymbol &&
+      Number(holding.shares) > 0
+  );
+
+  const balanceStrategyActive =
+    strategy.leveragedEtf && Boolean(balanceHolding);
+
+  const effectiveNeedsRebalance =
+    balanceStrategyActive && needsRebalance;
+
+  const drawdownActionRequired =
+    Boolean(advice.tier) &&
+    Number(advice.amount) > 0 &&
+    data.executedTier !== advice.tier;
+
+  const todayNeedsAction =
+    drawdownActionRequired || effectiveNeedsRebalance;
 
   const strategyForDecision = {
     ...cloneDefaultData().strategies,
@@ -1403,7 +1464,7 @@ export default function Home() {
 
   const aiOneLine =
     aiDecisionStatus === "rebalance"
-      ? "正2平衡策略已偏離容忍區間，建議查看調節金額。"
+      ? "平衡策略已偏離容忍區間，建議查看調節金額。"
       : aiDecisionStatus === "review"
       ? "今天有高重要事件，建議先查看事件中心。"
       : aiDecisionStatus === "watch"
@@ -1424,9 +1485,9 @@ export default function Home() {
       : "沒有事件需要優先閱讀",
     strategy.leveragedEtf
       ? needsRebalance
-        ? "正2平衡策略已超出容忍區間"
-        : "正2平衡策略仍在容忍區間"
-      : "正2平衡策略未啟用",
+        ? "平衡策略已超出容忍區間"
+        : "平衡策略仍在容忍區間"
+      : "平衡策略未啟用",
     `可投資現金為 ${money(investableCash)}`
   ];
 
@@ -1497,7 +1558,7 @@ export default function Home() {
                 ? `建議調節約 ${money(Math.abs(rebalanceAmount))}。`
                 : "目前仍在容忍區間內。"
             }`
-          : "正2平衡策略目前未啟用，因此不產生調節建議。"
+          : "平衡策略目前未啟用，因此不產生調節建議。"
       );
       return;
     }
@@ -1530,11 +1591,11 @@ export default function Home() {
   );
   const wealthGoalProgress =
     wealthGoalAmount > 0
-      ? Math.min(100, (computed.totalAsset / wealthGoalAmount) * 100)
+      ? Math.min(100, (computed.totalAssets / wealthGoalAmount) * 100)
       : 0;
   const wealthGoalGap = Math.max(
     0,
-    wealthGoalAmount - computed.totalAsset
+    wealthGoalAmount - computed.totalAssets
   );
   const wealthGoalDate = data.settings.wealthGoalDate
     ? new Date(`${data.settings.wealthGoalDate}T00:00:00`)
@@ -1579,7 +1640,7 @@ export default function Home() {
       <header className="topbar">
         <div>
           <h1>Jay Invest</h1>
-          <p>V6 Wealth Assistant・Simple Decision v6.0.3</p>
+          <p>V6 Wealth Assistant・Generic Balance v6.2</p>
         </div>
         <div className="topActions">
           <button
@@ -1605,9 +1666,7 @@ export default function Home() {
 
       <section
         className={`card simpleV6Decision ${
-          needsRebalance || decisionSummary.status === "red"
-            ? "yellow"
-            : "green"
+          todayNeedsAction ? "yellow" : "green"
         }`}
       >
         <span className="eyebrow">今天需要變動？</span>
@@ -1615,30 +1674,46 @@ export default function Home() {
         <div className="simpleV6Answer">
           <span
             className={`decisionDot ${
-              needsRebalance || decisionSummary.status === "red"
-                ? "yellow"
-                : "green"
+              todayNeedsAction ? "yellow" : "green"
             }`}
           />
-          <strong>
-            {needsRebalance || decisionSummary.status === "red"
-              ? "需要"
-              : "不需要"}
-          </strong>
+          <strong>{todayNeedsAction ? "需要" : "不需要"}</strong>
         </div>
+
+        {drawdownActionRequired && (
+          <div className="simpleMarketAction">
+            <span>大盤回檔策略</span>
+            <b>
+              已達 {advice.tier}，建議評估投入 {money(advice.amount)}
+            </b>
+          </div>
+        )}
 
         {strategy.leveragedEtf && (
           <div className="simpleRebalanceBox">
-            <div>
-              <span>正2平衡</span>
-              <b>{needsRebalance ? "需要調整" : "不用調整"}</b>
-            </div>
-
-            {needsRebalance && (
-              <div>
-                <span>建議調整金額</span>
-                <b>{money(Math.abs(rebalanceAmount))}</b>
+            {!balanceHolding ? (
+              <div className="fullRebalanceRow">
+                <span>平衡策略</span>
+                <b>未持有 {balanceSymbol}，策略不啟動</b>
               </div>
+            ) : (
+              <>
+                <div>
+                  <span>平衡策略</span>
+                  <b>
+                    {effectiveNeedsRebalance
+                      ? "需要調整"
+                      : "不用調整"}
+                  </b>
+                </div>
+
+                {effectiveNeedsRebalance && (
+                  <div>
+                    <span>建議調整金額</span>
+                    <b>{money(Math.abs(rebalanceAmount))}</b>
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}
@@ -1768,7 +1843,7 @@ export default function Home() {
         <div className="goalHeadline">
           <div>
             <span>目前總資產</span>
-            <b>{money(computed.totalAsset)}</b>
+            <b>{money(computed.totalAssets)}</b>
           </div>
           <div>
             <span>財富目標</span>
@@ -2233,41 +2308,6 @@ export default function Home() {
         )}
       </section>
 
-      <section className="card performanceCard">
-        <h2>AI 績效與資金分析</h2>
-
-        <div className="performanceGrid">
-          <div>
-            <span>累積已實現損益</span>
-            <b className={realizedPnlTotal >= 0 ? "up" : "down"}>
-              {signedMoney(realizedPnlTotal)}
-            </b>
-          </div>
-          <div>
-            <span>賣出交易勝率</span>
-            <b>{winRate.toFixed(1)}%</b>
-          </div>
-          <div>
-            <span>股票資金使用率</span>
-            <b>{cashUsageRate.toFixed(1)}%</b>
-          </div>
-          <div>
-            <span>目前可投資現金</span>
-            <b>{money(investableCash)}</b>
-          </div>
-        </div>
-
-        <div className="cashAdvice">
-          <b>AI 資金提醒</b>
-          <span>
-            {projectedInvestableCash <= 0
-              ? "目前可投資現金已接近零，新增部位前應先補足現金。"
-              : cashUsageRate >= 80
-              ? "股票部位已使用大部分資金，新增交易前請留意流動性。"
-              : "目前仍保有可投資現金，交易前可先使用上方預估確認交易後餘額。"}
-          </span>
-        </div>
-      </section>
 
       <section className="card">
         <h2>資產成長</h2>
@@ -2491,8 +2531,8 @@ export default function Home() {
           }
         />
         <StrategyToggle
-          label="正2平衡策略"
-          description="開啟後，首頁才會顯示股票／可投資現金比例與建議調節金額"
+          label="平衡策略"
+          description="開啟後，可從目前持股中選擇一檔標的，並依標的市值／可投資現金比例給出調節建議"
           checked={strategy.leveragedEtf}
           onChange={(checked) =>
             setData({
@@ -2509,8 +2549,45 @@ export default function Home() {
 
 
         <div className="rebalanceSettings">
+          <label className="fullWidthField">
+            <span>套用平衡的持股</span>
+            <select
+              value={
+                data.settings.balanceSymbol ||
+                data.settings.leveragedEtfSymbol ||
+                ""
+              }
+              onChange={(event) =>
+                setData({
+                  ...data,
+                  settings: {
+                    ...data.settings,
+                    balanceSymbol: event.target.value
+                  }
+                })
+              }
+            >
+              <option value="">請選擇持股</option>
+              {(data.holdings || [])
+                .filter((holding) => Number(holding.shares) > 0)
+                .map((holding) => (
+                  <option
+                    key={holding.id || holding.symbol}
+                    value={String(holding.symbol || "")
+                      .trim()
+                      .toUpperCase()}
+                  >
+                    {String(holding.symbol || "")
+                      .trim()
+                      .toUpperCase()}
+                    {" ・ "}
+                    {Number(holding.shares).toLocaleString("zh-TW")} 股
+                  </option>
+                ))}
+            </select>
+          </label>
           <Field
-            label="股票目標比例（%）"
+            label="指定持股目標比例（%）"
             type="number"
             value={data.settings.rebalanceStockTarget}
             onChange={(value) => {
@@ -2572,7 +2649,7 @@ export default function Home() {
           />
 
           <div className="rebalanceSettingsNote">
-            只使用「股票市值＋可投資現金」計算。
+            只使用「指定持股市值＋可投資現金」計算。
             緊急預備金與黃金完全排除，不會被建議拿去加碼。
           </div>
         </div>
@@ -2582,10 +2659,10 @@ export default function Home() {
           <b>目前策略</b>
           <span>
             {strategy.leveragedEtf
-              ? `正2平衡 ${data.settings.rebalanceStockTarget || 60}/${
+              ? `平衡策略 ${data.settings.rebalanceStockTarget || 60}/${
                   100 - Number(data.settings.rebalanceStockTarget || 60)
                 } 已開啟。`
-              : "正2平衡策略暫停。"}
+              : "平衡策略暫停。"}
           </span>
         </div>
       </section>

@@ -1,6 +1,6 @@
 {
-  "name": "jay-invest-v6-simple-decision-holdings-fix-v6-0-3",
-  "version": "6.0.3",
+  "name": "jay-invest-v6-generic-balance-strategy",
+  "version": "6.2.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
