@@ -1,6 +1,6 @@
 {
-  "name": "jay-invest-v5-alpha3-3-cash-engine",
-  "version": "5.0.0-alpha.3.3",
+  "name": "jay-invest-v5-alpha3-5-conditional-rebalance",
+  "version": "5.0.0-alpha.3.5",
   "private": true,
   "scripts": {
     "dev": "next dev",

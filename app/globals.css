@@ -822,3 +822,245 @@ textarea{
     grid-template-columns:1fr
   }
 }
+
+
+/* V5 Alpha 3.4 compact event center */
+.eventList.compactScroller{
+  display:grid;
+  grid-auto-flow:column;
+  grid-auto-columns:minmax(250px, calc((100% - 20px) / 3));
+  gap:10px;
+  overflow-x:auto;
+  overflow-y:hidden;
+  scroll-snap-type:x mandatory;
+  overscroll-behavior-inline:contain;
+  padding:2px 2px 12px;
+  scrollbar-width:thin
+}
+.eventList.expanded{
+  display:flex;
+  flex-direction:column;
+  gap:10px
+}
+.compactScroller .eventItem{
+  scroll-snap-align:start;
+  min-width:0;
+  height:100%
+}
+.eventItem.compactCard{
+  padding:13px;
+  min-height:230px
+}
+.compactCard .eventTopLine{
+  grid-template-columns:auto minmax(0,1fr);
+  gap:10px
+}
+.compactCard .priorityBadge{
+  grid-column:1 / -1;
+  justify-self:start;
+  padding:5px 8px
+}
+.compactCard .eventScore{
+  width:50px;
+  min-width:50px;
+  height:54px
+}
+.compactCard .eventScore strong{
+  font-size:19px
+}
+.compactCard .eventIdentity h3{
+  font-size:14px;
+  line-height:1.35
+}
+.compactCard .compactOptional{
+  display:none
+}
+.compactCard .compactAdvice{
+  margin-top:11px;
+  padding:10px
+}
+.compactCard .compactAdvice span{
+  display:-webkit-box;
+  -webkit-line-clamp:2;
+  -webkit-box-orient:vertical;
+  overflow:hidden
+}
+.compactSummary{
+  margin:7px 0 0;
+  color:var(--muted);
+  font-size:11px;
+  line-height:1.45;
+  display:-webkit-box;
+  -webkit-line-clamp:3;
+  -webkit-box-orient:vertical;
+  overflow:hidden
+}
+.compactCard .eventFooter{
+  margin-top:auto;
+  padding-top:10px
+}
+.compactCard .eventFooter>small{
+  display:none
+}
+.compactCard .eventContent{
+  display:flex;
+  flex-direction:column;
+  min-height:100%
+}
+.eventCenterHint{
+  color:var(--muted);
+  font-size:11px
+}
+@media(max-width:760px){
+  .eventList.compactScroller{
+    grid-auto-columns:minmax(250px, calc((100% - 10px) / 2))
+  }
+}
+@media(max-width:470px){
+  .eventList.compactScroller{
+    grid-auto-columns:85%
+  }
+}
+
+
+/* V5 Alpha 3.5 conditional rebalance */
+.simpleDecision{
+  padding:20px;
+  border-width:1px
+}
+.simpleDecision.green{border-color:#245c32}
+.simpleDecision.yellow{border-color:#6a5519}
+.simpleDecision.red{border-color:#6d2725}
+.simpleDecisionAnswer{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  margin-top:8px
+}
+.simpleDecisionAnswer strong{
+  font-size:30px;
+  letter-spacing:-.5px
+}
+.decisionDot{
+  width:15px;
+  height:15px;
+  border-radius:50%;
+  box-shadow:0 0 16px currentColor
+}
+.decisionDot.green{background:var(--green);color:var(--green)}
+.decisionDot.yellow{background:#ffd466;color:#ffd466}
+.decisionDot.red{background:#ff8f89;color:#ff8f89}
+.decisionMuted{
+  margin-top:10px;
+  line-height:1.5
+}
+.rebalanceDecision{
+  margin-top:16px;
+  padding:15px;
+  border-radius:17px;
+  background:#101015;
+  border:1px solid var(--line)
+}
+.rebalanceHeadline{
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:12px
+}
+.rebalanceHeadline span,
+.rebalanceHeadline b{
+  display:block
+}
+.rebalanceHeadline>div>span{
+  color:var(--muted);
+  font-size:10px
+}
+.rebalanceHeadline>div>b{
+  margin-top:5px;
+  font-size:14px
+}
+.rebalanceBadge{
+  padding:6px 9px;
+  border-radius:999px;
+  font-size:10px;
+  font-weight:850;
+  white-space:nowrap
+}
+.rebalanceBadge.warning{
+  background:#372d12;
+  color:#ffd466
+}
+.rebalanceBadge.normal{
+  background:#122b1a;
+  color:var(--green)
+}
+.rebalanceRatios{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:9px;
+  margin-top:13px
+}
+.rebalanceRatios>div{
+  padding:11px;
+  border-radius:13px;
+  background:#17171d;
+  border:1px solid var(--line)
+}
+.rebalanceRatios span,
+.rebalanceRatios b{
+  display:block
+}
+.rebalanceRatios span{
+  color:var(--muted);
+  font-size:10px
+}
+.rebalanceRatios b{
+  margin-top:5px;
+  font-size:16px
+}
+.rebalanceAction{
+  margin-top:12px;
+  padding:13px;
+  border-radius:14px;
+  background:#28220f
+}
+.rebalanceAction.normal{
+  background:#102318
+}
+.rebalanceAction b,
+.rebalanceAction span{
+  display:block
+}
+.rebalanceAction span{
+  margin-top:5px;
+  color:var(--muted);
+  font-size:11px;
+  line-height:1.55
+}
+.rebalanceSettings{
+  display:grid;
+  grid-template-columns:1fr 1fr 1fr;
+  gap:10px;
+  margin:14px 0;
+  padding:14px;
+  border-radius:16px;
+  background:#101015;
+  border:1px solid var(--line)
+}
+.rebalanceSettingsNote{
+  grid-column:1/-1;
+  color:var(--muted);
+  font-size:11px;
+  line-height:1.55
+}
+@media(max-width:600px){
+  .rebalanceSettings,
+  .rebalanceRatios{
+    grid-template-columns:1fr
+  }
+}
+@media(max-width:470px){
+  .rebalanceHeadline{
+    flex-direction:column
+  }
+}

@@ -31,7 +31,10 @@ const DEFAULT_DATA = {
     recurringAmount: 4000,
     recurringDays: [7, 14, 21, 28],
     recurringNote: "每月固定分批投入，其餘資金保留現金。",
-    reserveCash: 0
+    reserveCash: 0,
+    rebalanceStockTarget: 60,
+    rebalanceCashTarget: 40,
+    rebalanceTolerance: 5
   },
   snapshots: [],
   transactions: [],
@@ -128,6 +131,7 @@ export default function Home() {
   const [events, setEvents] = useState([]);
   const [eventsLoading, setEventsLoading] = useState(false);
   const [eventMessage, setEventMessage] = useState("");
+  const [showAllEvents, setShowAllEvents] = useState(false);
   const [simulating, setSimulating] = useState(false);
   const [strategyMode, setStrategyMode] = useState("long_term");
   const [newEvent, setNewEvent] = useState({
@@ -1342,6 +1346,47 @@ export default function Home() {
         100
       : 0;
 
+
+  const rebalanceInvestableTotal =
+    computed.stockValue + investableCash;
+
+  const currentStockRatio =
+    rebalanceInvestableTotal > 0
+      ? (computed.stockValue / rebalanceInvestableTotal) * 100
+      : 0;
+
+  const currentCashRatio =
+    rebalanceInvestableTotal > 0
+      ? (investableCash / rebalanceInvestableTotal) * 100
+      : 0;
+
+  const stockTarget = Math.max(
+    0,
+    Math.min(100, Number(data.settings.rebalanceStockTarget) || 60)
+  );
+
+  const cashTarget = 100 - stockTarget;
+
+  const rebalanceTolerance = Math.max(
+    0,
+    Number(data.settings.rebalanceTolerance) || 0
+  );
+
+  const targetStockValue =
+    rebalanceInvestableTotal * (stockTarget / 100);
+
+  const rebalanceAmount =
+    computed.stockValue - targetStockValue;
+
+  const needsRebalance =
+    strategy.leveragedEtf &&
+    rebalanceInvestableTotal > 0 &&
+    Math.abs(currentStockRatio - stockTarget) >
+      rebalanceTolerance;
+
+  const rebalanceDirection =
+    rebalanceAmount > 0 ? "reduce_stock" : "increase_stock";
+
   const strategyForDecision = {
     ...cloneDefaultData().strategies,
     ...(data.strategies || {})
@@ -1443,7 +1488,7 @@ export default function Home() {
       <header className="topbar">
         <div>
           <h1>Jay Invest</h1>
-          <p>V5 Alpha 3.3・Cash Engine</p>
+          <p>V5 Alpha 3.5・Conditional Rebalance</p>
         </div>
         <div className="topActions">
           <button
@@ -1467,115 +1512,96 @@ export default function Home() {
         <b>{cloudLoading ? "同步中…" : cloudStatus}</b>
       </div>
 
-      <section className={`card decisionHero ${decisionSummary.status}`}>
-        <div className="decisionHeader">
-          <div>
-            <span className="eyebrow">AI 今日決策</span>
-            <h2>{decisionActionText(decisionSummary.status)}</h2>
-            <p>{decisionSummary.title}</p>
-          </div>
+      <section
+        className={`card simpleDecision ${
+          needsRebalance ? "yellow" : decisionSummary.status
+        }`}
+      >
+        <span className="eyebrow">今天需要變動？</span>
 
-          <div className={`decisionLight ${decisionSummary.status}`}>
-            <span />
-            <b>{decisionStatusText(decisionSummary.status)}</b>
-          </div>
+        <div className="simpleDecisionAnswer">
+          <span
+            className={`decisionDot ${
+              needsRebalance ? "yellow" : decisionSummary.status
+            }`}
+          />
+          <strong>
+            {needsRebalance
+              ? "需要調節"
+              : decisionSummary.status === "red"
+              ? "建議重新檢視"
+              : "不需要"}
+          </strong>
         </div>
 
-        <div className="decisionMain">
-          <div className="decisionAnswer">
-            <span>今天需要變動嗎？</span>
-            <strong>
-              {decisionSummary.status === "red"
-                ? "需要重新檢視"
-                : "不需要"}
-            </strong>
-            <p>{decisionSummary.reason}</p>
-          </div>
-
-          <div className="decisionStats">
-            <div>
-              <span>建議閱讀時間</span>
-              <b>{decisionSummary.minutes} 分鐘</b>
-            </div>
-            <div>
-              <span>AI 今日信心</span>
-              <b>{decisionConfidence}%</b>
-            </div>
-            <div>
-              <span>直接影響持股</span>
-              <b>{directImpactEvents.length} 件</b>
-            </div>
-            <div>
-              <span>高重要事件</span>
-              <b>{highPriorityEvents.length} 件</b>
-            </div>
-          </div>
-        </div>
-
-        <div className="decisionReasons">
-          <b>判斷理由</b>
-          <div className="reasonGrid">
-            {decisionReasons.map((reason, index) => (
-              <span key={index}>✓ {reason}</span>
-            ))}
-          </div>
-        </div>
-
-        <div className="strategyReminder">
-          <b>你的目前策略</b>
-          <span>
-            {strategyForDecision.recurring009816
-              ? `${data.settings.recurringSymbol || "未設定標的"} 定期投入持續；`
-              : `${data.settings.recurringSymbol || "定期定額"} 暫停；`}
-            {strategyForDecision.goldBuying
-              ? "黃金買進開啟；"
-              : "黃金維持持有、不新增；"}
-            {strategyForDecision.leveragedEtf
-              ? "正2策略開啟。"
-              : "正2策略暫停。"}
-          </span>
-        </div>
-
-        {topDecisionEvents.length > 0 && (
-          <div className="topDecisionEvents">
-            <div className="sectionHeader compact">
+        {strategy.leveragedEtf && (
+          <div className="rebalanceDecision">
+            <div className="rebalanceHeadline">
               <div>
-                <h3>最值得先看的事件</h3>
-                <small>依事件重要性與對投資組合影響排序。</small>
+                <span>正2平衡策略</span>
+                <b>
+                  目標股票 {stockTarget.toFixed(0)}%／現金{" "}
+                  {cashTarget.toFixed(0)}%
+                </b>
+              </div>
+              <span
+                className={
+                  needsRebalance
+                    ? "rebalanceBadge warning"
+                    : "rebalanceBadge normal"
+                }
+              >
+                {needsRebalance ? "需要平衡" : "配置正常"}
+              </span>
+            </div>
+
+            <div className="rebalanceRatios">
+              <div>
+                <span>目前股票</span>
+                <b>{currentStockRatio.toFixed(1)}%</b>
+              </div>
+              <div>
+                <span>目前可投資現金</span>
+                <b>{currentCashRatio.toFixed(1)}%</b>
+              </div>
+              <div>
+                <span>容忍區間</span>
+                <b>±{rebalanceTolerance.toFixed(1)}%</b>
               </div>
             </div>
 
-            {topDecisionEvents.map((event, index) => {
-              const impact = getPortfolioImpact(event);
-              return (
-                <div className="decisionEventRow" key={event.id}>
-                  <span className="decisionRank">{index + 1}</span>
-                  <div>
-                    <b>{event.symbol || "市場"}・{event.title}</b>
-                    <small>
-                      重要分數 {event.score}｜{impact.label}｜
-                      {event.source_name || "未知來源"}
-                    </small>
-                  </div>
-                </div>
-              );
-            })}
+            {needsRebalance ? (
+              <div className="rebalanceAction">
+                <b>
+                  {rebalanceDirection === "reduce_stock"
+                    ? `建議股票部位減少約 ${money(
+                        Math.abs(rebalanceAmount)
+                      )}`
+                    : `建議股票部位增加約 ${money(
+                        Math.abs(rebalanceAmount)
+                      )}`}
+                </b>
+                <span>
+                  此金額是恢復至目標比例的估算，不會自動替你下單。
+                  緊急預備金與黃金不納入這項平衡計算。
+                </span>
+              </div>
+            ) : (
+              <div className="rebalanceAction normal">
+                <b>目前不需要調節</b>
+                <span>
+                  股票與可投資現金仍在你設定的容忍範圍內。
+                </span>
+              </div>
+            )}
           </div>
         )}
 
-        <div className="decisionFooter">
-          <span>
-            更新時間：
-            {new Date().toLocaleString("zh-TW")}
-          </span>
-          <button
-            className="textButton"
-            onClick={() => loadEvents(session.user.id)}
-            disabled={eventsLoading}
-          >
-            {eventsLoading ? "更新中" : "重新分析"}
-          </button>
-        </div>
+        {!strategy.leveragedEtf && (
+          <small className="decisionMuted">
+            正2平衡策略目前關閉，因此不顯示調節金額。
+          </small>
+        )}
       </section>
 
       <section className="card">
@@ -1620,8 +1646,18 @@ export default function Home() {
         <div className="sectionHeader">
           <div>
             <h2>事件中心</h2>
-            <small>V5 的晨報、推播、研究報告都會共用這裡的資料。</small>
+            <small>
+              預設顯示前 3 則；可左右滑動查看更多，或展開全部事件。
+            </small>
           </div>
+          {events.length > 3 && (
+            <button
+              className="smallButton"
+              onClick={() => setShowAllEvents(!showAllEvents)}
+            >
+              {showAllEvents ? "收合" : `查看全部 ${events.length} 則`}
+            </button>
+          )}
         </div>
 
         {eventMessage && (
@@ -1633,15 +1669,21 @@ export default function Home() {
             目前沒有事件。
           </div>
         ) : (
-          <div className="eventList">
-            {events.slice(0, 20).map((event) => {
+          <div
+            className={`eventList ${
+              showAllEvents ? "expanded" : "compactScroller"
+            }`}
+          >
+            {(showAllEvents ? events.slice(0, 20) : events.slice(0, 10)).map((event) => {
               const impact = getPortfolioImpact(event);
               const recommendation = getEventRecommendation(event);
               const breakdown = getScoreBreakdown(event);
 
               return (
                 <article
-                  className={`eventItem ${event.watch_level} ${
+                  className={`eventItem ${
+                    showAllEvents ? "fullCard" : "compactCard"
+                  } ${event.watch_level} ${
                     event.is_read ? "read" : ""
                   }`}
                   key={event.id}
@@ -1658,6 +1700,9 @@ export default function Home() {
                         <span>{event.rule_label}</span>
                       </div>
                       <h3>{event.title}</h3>
+                      {!showAllEvents && event.summary && (
+                        <p className="compactSummary">{event.summary}</p>
+                      )}
                     </div>
 
                     <span
@@ -1667,7 +1712,7 @@ export default function Home() {
                     </span>
                   </div>
 
-                  <div className="eventMetrics">
+                  <div className="eventMetrics compactOptional">
                     <div>
                       <span>事件重要性</span>
                       <b>{importanceLabel(event.score)}</b>
@@ -1696,18 +1741,18 @@ export default function Home() {
                   </div>
 
                   {event.summary && (
-                    <div className="aiSummary">
+                    <div className="aiSummary compactOptional">
                       <span>AI 摘要</span>
                       <p>{event.summary}</p>
                     </div>
                   )}
 
-                  <div className={`eventAdvice ${recommendation.tone}`}>
+                  <div className={`eventAdvice compactAdvice ${recommendation.tone}`}>
                     <b>{recommendation.title}</b>
                     <span>{recommendation.detail}</span>
                   </div>
 
-                  <div className="sourceRow">
+                  <div className="sourceRow compactOptional">
                     <div>
                       <span>來源</span>
                       <b>{event.source_name || "未知來源"}</b>
@@ -1736,7 +1781,7 @@ export default function Home() {
                     )}
                   </div>
 
-                  <details className="explainChain">
+                  <details className="explainChain compactOptional">
                     <summary>查看 AI 評分原因</summary>
 
                     <div className="breakdownRow">
@@ -2760,9 +2805,78 @@ export default function Home() {
           }
         />
 
+        <div className="rebalanceSettings">
+          <Field
+            label="股票目標比例（%）"
+            type="number"
+            value={data.settings.rebalanceStockTarget}
+            onChange={(value) => {
+              const stock = Math.max(
+                0,
+                Math.min(100, Number(value))
+              );
+              setData({
+                ...data,
+                settings: {
+                  ...data.settings,
+                  rebalanceStockTarget: stock,
+                  rebalanceCashTarget: 100 - stock
+                }
+              });
+            }}
+          />
+
+          <Field
+            label="可投資現金目標（%）"
+            type="number"
+            value={
+              100 -
+              Number(data.settings.rebalanceStockTarget || 0)
+            }
+            onChange={(value) => {
+              const cash = Math.max(
+                0,
+                Math.min(100, Number(value))
+              );
+              setData({
+                ...data,
+                settings: {
+                  ...data.settings,
+                  rebalanceCashTarget: cash,
+                  rebalanceStockTarget: 100 - cash
+                }
+              });
+            }}
+          />
+
+          <Field
+            label="容忍區間（±%）"
+            type="number"
+            step="0.5"
+            value={data.settings.rebalanceTolerance}
+            onChange={(value) =>
+              setData({
+                ...data,
+                settings: {
+                  ...data.settings,
+                  rebalanceTolerance: Math.max(
+                    0,
+                    Number(value)
+                  )
+                }
+              })
+            }
+          />
+
+          <div className="rebalanceSettingsNote">
+            只使用「股票市值＋可投資現金」計算。
+            緊急預備金與黃金完全排除，不會被建議拿去加碼。
+          </div>
+        </div>
+
         <StrategyToggle
-          label="正2 加碼策略"
-          description="目前關閉；重新勾選後才顯示正2加碼語句"
+          label="正2平衡策略"
+          description="開啟後，首頁才會顯示股票／可投資現金比例與建議調節金額"
           checked={strategy.leveragedEtf}
           onChange={(checked) =>
             setData({
@@ -2830,8 +2944,10 @@ export default function Home() {
               ? "黃金買進開啟；"
               : "黃金維持持有、不新增；"}
             {strategy.leveragedEtf
-              ? "正2策略開啟。"
-              : "正2策略暫停。"}
+              ? `正2平衡 ${data.settings.rebalanceStockTarget || 60}/${
+                  100 - Number(data.settings.rebalanceStockTarget || 60)
+                } 已開啟。`
+              : "正2平衡策略暫停。"}
           </span>
         </div>
       </section>
