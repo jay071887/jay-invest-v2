@@ -427,3 +427,22 @@ select{
 .fullRebalanceRow{
   grid-column:1 / -1
 }
+
+
+/* V7.5 Margin & Short Engine */
+.tradeTypeTabs{grid-template-columns:repeat(4,1fr)}
+.tradeTypeTabs button{min-height:60px;font-size:14px}
+.leverageFields{margin-top:10px;padding:12px;border-radius:14px;background:#101015;border:1px solid var(--line)}
+.leverageSummary{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin-top:12px}
+.leverageSummary>div{padding:11px;border-radius:13px;background:#101015;border:1px solid var(--line)}
+.leverageSummary span,.leverageSummary b{display:block}
+.leverageSummary span{font-size:10px;color:var(--muted)}
+.leverageSummary b{margin-top:5px;font-size:14px}
+.warningText{color:#ffd466!important}
+.marginRiskBanner{margin-top:14px;padding:13px;border-radius:14px;border:1px solid var(--line)}
+.marginRiskBanner span,.marginRiskBanner b{display:block}
+.marginRiskBanner span{font-size:10px;color:var(--muted)}
+.marginRiskBanner b{margin-top:5px}
+.marginRiskBanner.safe{background:#102318}.marginRiskBanner.warning{background:#28220f}.marginRiskBanner.danger{background:#261314}
+@media(max-width:700px){.tradeTypeTabs{grid-template-columns:1fr 1fr}.leverageSummary{grid-template-columns:1fr 1fr}}
+@media(max-width:470px){.leverageSummary{grid-template-columns:1fr}}

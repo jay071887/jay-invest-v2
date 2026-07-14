@@ -14,7 +14,9 @@ const DEFAULT_DATA = {
       id: "default-009816",
       symbol: "009816",
       shares: 0,
-      averageCost: 0
+      averageCost: 0,
+      positionType: "cash",
+      openedAt: ""
     }
   ],
   settings: {
@@ -33,7 +35,13 @@ const DEFAULT_DATA = {
     balanceSymbol: "00631L",
     wealthGoalAmount: 2000000,
     wealthGoalDate: "2027-07-18",
-    monthlyContribution: 30000
+    monthlyContribution: 30000,
+    financingRatio: 60,
+    financingAnnualRate: 6.5,
+    shortMarginRatio: 90,
+    shortBorrowAnnualRate: 6.5,
+    maintenanceWarning: 160,
+    maintenanceCall: 130
   },
   snapshots: [],
   transactions: [],
@@ -138,12 +146,16 @@ export default function Home() {
     confidence: 100
   });
   const [trade, setTrade] = useState({
-    type: "buy",
+    type: "cash_buy",
     symbol: "",
     shares: 0,
     price: 0,
     date: new Date().toISOString().slice(0, 10),
     cashAmount: 0,
+    financingRatio: 60,
+    financingAnnualRate: 6.5,
+    shortMarginRatio: 90,
+    shortBorrowAnnualRate: 6.5,
     note: ""
   });
   const [tradeMessage, setTradeMessage] = useState("");
@@ -497,32 +509,89 @@ export default function Home() {
 
     const holdings = data.holdings.map((holding) => {
       const quote = quoteMap[holding.symbol] || {};
-      const price = quote.price || 0;
-      const previousClose = quote.previousClose || price;
-
-      const marketValue = Number(holding.shares) * price;
+      const price = Number(quote.price) || Number(holding.averageCost) || 0;
+      const previousClose = Number(quote.previousClose) || price;
+      const shares = Number(holding.shares) || 0;
+      const averageCost = Number(holding.averageCost) || 0;
+      const positionType = holding.positionType || "cash";
+      const marketValue = shares * price;
+      const openedAt = holding.openedAt
+        ? new Date(`${holding.openedAt}T00:00:00`)
+        : new Date();
+      const holdingDays = Math.max(
+        0,
+        Math.ceil((Date.now() - openedAt.getTime()) / 86400000)
+      );
+      const financingPrincipal = Number(holding.financingPrincipal) || 0;
+      const financingAnnualRate =
+        Number(holding.financingAnnualRate) ||
+        Number(data.settings.financingAnnualRate) ||
+        0;
+      const accruedInterest =
+        positionType === "margin"
+          ? financingPrincipal * (financingAnnualRate / 100) *
+            (holdingDays / 365)
+          : 0;
+      const shortSaleProceeds = Number(holding.shortSaleProceeds) || 0;
+      const shortMarginDeposit = Number(holding.shortMarginDeposit) || 0;
+      const shortBorrowAnnualRate =
+        Number(holding.shortBorrowAnnualRate) ||
+        Number(data.settings.shortBorrowAnnualRate) ||
+        0;
+      const accruedBorrowFee =
+        positionType === "short"
+          ? shortSaleProceeds * (shortBorrowAnnualRate / 100) *
+            (holdingDays / 365)
+          : 0;
       const dailyPnl =
-        Number(holding.shares) * (price - previousClose);
+        positionType === "short"
+          ? shares * (previousClose - price)
+          : shares * (price - previousClose);
       const totalPnl =
-        Number(holding.shares) *
-        (price - Number(holding.averageCost));
+        positionType === "short"
+          ? shares * (averageCost - price) - accruedBorrowFee
+          : shares * (price - averageCost) - accruedInterest;
+      const netEquity =
+        positionType === "margin"
+          ? marketValue - financingPrincipal - accruedInterest
+          : positionType === "short"
+          ? shortSaleProceeds + shortMarginDeposit - marketValue - accruedBorrowFee
+          : marketValue;
+      const maintenanceRate =
+        positionType === "margin" && financingPrincipal > 0
+          ? (marketValue / financingPrincipal) * 100
+          : positionType === "short" && marketValue > 0
+          ? ((shortSaleProceeds + shortMarginDeposit) / marketValue) * 100
+          : null;
 
       return {
         ...holding,
+        positionType,
         name: quote.name || holding.symbol,
         price,
         marketValue,
+        netEquity,
         dailyPnl,
         totalPnl,
+        holdingDays,
+        accruedInterest,
+        accruedBorrowFee,
+        maintenanceRate,
         returnPct:
-          holding.averageCost > 0
-            ? ((price / Number(holding.averageCost)) - 1) * 100
+          averageCost > 0
+            ? positionType === "short"
+              ? ((averageCost / price) - 1) * 100
+              : ((price / averageCost) - 1) * 100
             : 0
       };
     });
 
-    const stockValue = holdings.reduce(
+    const grossStockValue = holdings.reduce(
       (sum, holding) => sum + holding.marketValue,
+      0
+    );
+    const stockValue = holdings.reduce(
+      (sum, holding) => sum + holding.netEquity,
       0
     );
     const stockDaily = holdings.reduce(
@@ -533,6 +602,12 @@ export default function Home() {
       (sum, holding) => sum + holding.totalPnl,
       0
     );
+    const leveragedHoldings = holdings.filter(
+      (holding) => ["margin", "short"].includes(holding.positionType)
+    );
+    const lowestMaintenance = leveragedHoldings
+      .filter((holding) => Number.isFinite(holding.maintenanceRate))
+      .sort((a, b) => a.maintenanceRate - b.maintenanceRate)[0] || null;
 
     const automaticGoldPrice = gold?.taelBuy || 0;
     const goldTaelPrice =
@@ -560,6 +635,9 @@ export default function Home() {
     return {
       holdings,
       stockValue,
+      grossStockValue,
+      leveragedHoldings,
+      lowestMaintenance,
       stockDaily,
       stockTotal,
       goldTaelPrice,
@@ -611,50 +689,39 @@ export default function Home() {
 
 
   const tradePreview = useMemo(() => {
-    const shares = Number(trade.shares) || 0;
+    const shares = Math.floor(Number(trade.shares) || 0);
     const price = Number(trade.price) || 0;
     const amount = shares * price;
     const discount =
       Math.max(0, Number(data.settings.brokerageDiscount) || 0) / 10;
     const calculatedFee = amount * 0.001425 * discount;
-    const fee =
-      amount > 0
-        ? Math.max(
-            Number(data.settings.minimumFee) || 0,
-            Math.round(calculatedFee)
-          )
-        : 0;
-    const tax =
-      trade.type === "sell"
-        ? Math.round(amount * 0.003)
-        : 0;
-    const cashChange =
-      trade.type === "buy"
-        ? -(amount + fee)
-        : trade.type === "sell"
-        ? amount - fee - tax
-        : trade.type === "cash_in"
-        ? Number(trade.cashAmount) || 0
-        : -(Number(trade.cashAmount) || 0);
+    const fee = amount > 0
+      ? Math.max(Number(data.settings.minimumFee) || 0, Math.round(calculatedFee))
+      : 0;
+    const isSale = ["cash_sell", "margin_sell", "short_sell"].includes(trade.type);
+    const tax = isSale ? Math.round(amount * 0.003) : 0;
+    const financingRatio = Math.max(0, Math.min(100,
+      Number(trade.financingRatio) || Number(data.settings.financingRatio) || 0));
+    const financingPrincipal = amount * (financingRatio / 100);
+    const selfFunding = amount - financingPrincipal;
+    const shortMarginRatio = Math.max(0,
+      Number(trade.shortMarginRatio) || Number(data.settings.shortMarginRatio) || 0);
+    const shortMarginDeposit = amount * (shortMarginRatio / 100);
+    let cashChange = 0;
+    if (trade.type === "cash_buy") cashChange = -(amount + fee);
+    if (trade.type === "cash_sell") cashChange = amount - fee - tax;
+    if (trade.type === "margin_buy") cashChange = -(selfFunding + fee);
+    if (trade.type === "short_sell") cashChange = -(shortMarginDeposit + fee + tax);
+    if (trade.type === "cash_in") cashChange = Number(trade.cashAmount) || 0;
+    if (trade.type === "cash_out") cashChange = -(Number(trade.cashAmount) || 0);
 
     return {
-      amount,
-      fee,
-      tax,
-      cashChange,
+      amount, fee, tax, financingRatio, financingPrincipal, selfFunding,
+      shortMarginRatio, shortMarginDeposit, cashChange,
       settlementAmount: Math.abs(cashChange),
-      effectiveUnitCost:
-        shares > 0 && trade.type === "buy"
-          ? (amount + fee) / shares
-          : shares > 0 && trade.type === "sell"
-          ? (amount - fee - tax) / shares
-          : 0
+      effectiveUnitCost: shares > 0 ? (amount + fee + tax) / shares : 0
     };
-  }, [
-    trade,
-    data.settings.brokerageDiscount,
-    data.settings.minimumFee
-  ]);
+  }, [trade, data.settings]);
 
   const investableCash = Math.max(
     0,
@@ -737,6 +804,12 @@ export default function Home() {
       .filter((holding) => holding.shares > 0);
   }
 
+  function positionTypeForTrade(type) {
+    if (type.startsWith("margin_")) return "margin";
+    if (type.startsWith("short_")) return "short";
+    return "cash";
+  }
+
   function submitTransaction() {
     const type = trade.type;
     const now = new Date().toISOString();
@@ -744,350 +817,150 @@ export default function Home() {
 
     if (["cash_in", "cash_out"].includes(type)) {
       const amount = Number(trade.cashAmount) || 0;
-
-      if (amount <= 0) {
-        setTradeMessage("請輸入現金金額。");
-        return;
-      }
-
-      if (type === "cash_out" && amount > currentCash) {
-        setTradeMessage("現金不足，無法登錄這筆支出。");
-        return;
-      }
-
+      if (amount <= 0) return setTradeMessage("請輸入現金金額。");
+      if (type === "cash_out" && amount > currentCash)
+        return setTradeMessage("可投資現金不足，無法登錄支出。");
+      const cashChange = type === "cash_in" ? amount : -amount;
       const transaction = {
-        id: crypto.randomUUID(),
-        type,
-        date: trade.date,
-        cashChange: tradePreview.cashChange,
+        id: crypto.randomUUID(), type, date: trade.date, cashChange,
         note: trade.note || (type === "cash_in" ? "現金收入" : "現金支出"),
-        createdAt: now
+        createdAt: now, holdingsBefore: data.holdings
       };
-
       setData({
         ...data,
-        settings: {
-          ...data.settings,
-          investmentCash: currentCash + tradePreview.cashChange
-        },
-        transactions: [
-          transaction,
-          ...(data.transactions || [])
-        ],
-        cashLedger: [
-          {
-            id: crypto.randomUUID(),
-            transactionId: transaction.id,
-            type,
-            amount: tradePreview.cashChange,
-            balanceAfter: currentCash + tradePreview.cashChange,
-            note: transaction.note,
-            date: trade.date,
-            createdAt: now
-          },
-          ...(data.cashLedger || [])
-        ]
+        settings: {...data.settings, investmentCash: currentCash + cashChange},
+        transactions: [transaction, ...(data.transactions || [])],
+        cashLedger: [{
+          id: crypto.randomUUID(), transactionId: transaction.id, type,
+          amount: cashChange, balanceAfter: currentCash + cashChange,
+          note: transaction.note, date: trade.date, createdAt: now
+        }, ...(data.cashLedger || [])]
       });
-
-      setTradeMessage(
-        `${type === "cash_in" ? "現金收入" : "現金支出"}已登錄，現金餘額自動更新。`
-      );
-
-      setTrade({
-        ...trade,
-        cashAmount: 0,
-        note: ""
-      });
+      setTradeMessage("現金餘額已更新。");
+      setTrade({...trade, cashAmount: 0, note: ""});
       return;
     }
 
-    const symbol = trade.symbol.trim();
+    const symbol = trade.symbol.trim().toUpperCase();
     const shares = Math.floor(Number(trade.shares) || 0);
     const price = Number(trade.price) || 0;
+    if (!symbol || shares <= 0 || price <= 0)
+      return setTradeMessage("請輸入股票代號、股數與成交價格。");
 
-    if (!symbol || shares <= 0 || price <= 0) {
-      setTradeMessage("請輸入股票代號、股數與成交價格。");
-      return;
-    }
-
+    const positionType = positionTypeForTrade(type);
+    const isOpening = ["cash_buy", "margin_buy", "short_sell"].includes(type);
+    const isClosing = ["cash_sell", "margin_sell", "short_cover"].includes(type);
     const existingHolding = (data.holdings || []).find(
-      (holding) => holding.symbol === symbol
+      h => h.symbol === symbol && (h.positionType || "cash") === positionType
     );
+    if (isClosing && (!existingHolding || Number(existingHolding.shares) < shares))
+      return setTradeMessage("平倉股數超過該交易方式的目前庫存。");
 
-    if (type === "sell") {
-      if (!existingHolding || Number(existingHolding.shares) < shares) {
-        setTradeMessage("賣出股數超過目前庫存。");
-        return;
+    let cashChange = tradePreview.cashChange;
+    let realizedPnl = 0;
+    let nextHoldings = [...(data.holdings || [])];
+
+    if (type === "margin_sell") {
+      const ratio = shares / Number(existingHolding.shares);
+      const principal = Number(existingHolding.financingPrincipal || 0) * ratio;
+      const days = Math.max(0, Math.ceil((Date.now() - new Date(`${existingHolding.openedAt || trade.date}T00:00:00`).getTime()) / 86400000));
+      const interest = principal * ((Number(existingHolding.financingAnnualRate) || Number(data.settings.financingAnnualRate) || 0) / 100) * (days / 365);
+      cashChange = tradePreview.amount - tradePreview.fee - tradePreview.tax - principal - interest;
+      realizedPnl = cashChange - shares * Number(existingHolding.selfFundingPerShare || 0);
+    }
+    if (type === "short_cover") {
+      const ratio = shares / Number(existingHolding.shares);
+      const proceeds = Number(existingHolding.shortSaleProceeds || 0) * ratio;
+      const deposit = Number(existingHolding.shortMarginDeposit || 0) * ratio;
+      const days = Math.max(0, Math.ceil((Date.now() - new Date(`${existingHolding.openedAt || trade.date}T00:00:00`).getTime()) / 86400000));
+      const borrowFee = proceeds * ((Number(existingHolding.shortBorrowAnnualRate) || Number(data.settings.shortBorrowAnnualRate) || 0) / 100) * (days / 365);
+      cashChange = deposit + proceeds - tradePreview.amount - tradePreview.fee - borrowFee;
+      realizedPnl = proceeds - tradePreview.amount - tradePreview.fee - tradePreview.tax - borrowFee;
+    }
+    if (currentCash + cashChange < 0)
+      return setTradeMessage("可投資現金不足，無法完成這筆交易。");
+
+    if (isOpening) {
+      const previousShares = Number(existingHolding?.shares) || 0;
+      const newShares = previousShares + shares;
+      const previousCost = previousShares * Number(existingHolding?.averageCost || 0);
+      const newAverageCost = (previousCost + tradePreview.amount + tradePreview.fee + tradePreview.tax) / newShares;
+      const base = {
+        ...(existingHolding || {}),
+        id: existingHolding?.id || crypto.randomUUID(), symbol, positionType,
+        shares: newShares, averageCost: Number(newAverageCost.toFixed(6)),
+        openedAt: existingHolding?.openedAt || trade.date
+      };
+      if (type === "margin_buy") {
+        base.financingRatio = tradePreview.financingRatio;
+        base.financingPrincipal = Number(existingHolding?.financingPrincipal || 0) + tradePreview.financingPrincipal;
+        base.financingAnnualRate = Number(trade.financingAnnualRate) || Number(data.settings.financingAnnualRate);
+        base.selfFundingPerShare = ((Number(existingHolding?.selfFundingPerShare || 0) * previousShares) + tradePreview.selfFunding + tradePreview.fee) / newShares;
       }
+      if (type === "short_sell") {
+        base.shortMarginRatio = tradePreview.shortMarginRatio;
+        base.shortSaleProceeds = Number(existingHolding?.shortSaleProceeds || 0) + tradePreview.amount;
+        base.shortMarginDeposit = Number(existingHolding?.shortMarginDeposit || 0) + tradePreview.shortMarginDeposit;
+        base.shortBorrowAnnualRate = Number(trade.shortBorrowAnnualRate) || Number(data.settings.shortBorrowAnnualRate);
+      }
+      nextHoldings = existingHolding
+        ? nextHoldings.map(h => h.id === existingHolding.id ? base : h)
+        : [...nextHoldings, base];
+    } else {
+      const remaining = Number(existingHolding.shares) - shares;
+      if (remaining <= 0) nextHoldings = nextHoldings.filter(h => h.id !== existingHolding.id);
+      else {
+        const factor = remaining / Number(existingHolding.shares);
+        nextHoldings = nextHoldings.map(h => h.id !== existingHolding.id ? h : {
+          ...h, shares: remaining,
+          financingPrincipal: Number(h.financingPrincipal || 0) * factor,
+          shortSaleProceeds: Number(h.shortSaleProceeds || 0) * factor,
+          shortMarginDeposit: Number(h.shortMarginDeposit || 0) * factor
+        });
+      }
+      if (type === "cash_sell")
+        realizedPnl = cashChange - shares * Number(existingHolding.averageCost || 0);
     }
-
-    if (type === "buy" && currentCash + tradePreview.cashChange < 0) {
-      setTradeMessage("可用現金不足，無法完成這筆買進。");
-      return;
-    }
-
-    const averageCostBefore =
-      Number(existingHolding?.averageCost) || 0;
-    const realizedPnl =
-      type === "sell"
-        ? tradePreview.cashChange -
-          shares * averageCostBefore
-        : 0;
 
     const transaction = {
-      id: crypto.randomUUID(),
-      type,
-      symbol,
-      shares,
-      price,
-      amount: tradePreview.amount,
-      fee: tradePreview.fee,
-      tax: tradePreview.tax,
-      totalCost:
-        type === "buy"
-          ? tradePreview.amount + tradePreview.fee
-          : 0,
-      netProceeds:
-        type === "sell"
-          ? tradePreview.cashChange
-          : 0,
-      cashChange: tradePreview.cashChange,
-      realizedPnl,
-      averageCostBefore,
-      date: trade.date,
-      note: trade.note,
-      createdAt: now
+      id: crypto.randomUUID(), type, positionType, symbol, shares, price,
+      amount: tradePreview.amount, fee: tradePreview.fee, tax: tradePreview.tax,
+      cashChange, realizedPnl, date: trade.date, note: trade.note,
+      holdingsBefore: data.holdings, createdAt: now
     };
-
-    const nextTransactions = [
-      transaction,
-      ...(data.transactions || [])
-    ];
-
-    const holdingBefore = existingHolding
-      ? {
-          id: existingHolding.id,
-          symbol: existingHolding.symbol,
-          shares: Number(existingHolding.shares) || 0,
-          averageCost: Number(existingHolding.averageCost) || 0
-        }
-      : null;
-
-    let nextHoldings;
-
-    if (type === "buy") {
-      const previousShares = Number(existingHolding?.shares) || 0;
-      const previousAverageCost =
-        Number(existingHolding?.averageCost) || 0;
-      const newShares = previousShares + shares;
-      const newAverageCost =
-        newShares > 0
-          ? (
-              previousShares * previousAverageCost +
-              tradePreview.amount +
-              tradePreview.fee
-            ) / newShares
-          : 0;
-
-      if (existingHolding) {
-        nextHoldings = (data.holdings || []).map((holding) =>
-          holding.id === existingHolding.id
-            ? {
-                ...holding,
-                shares: newShares,
-                averageCost: Number(newAverageCost.toFixed(6))
-              }
-            : holding
-        );
-      } else {
-        nextHoldings = [
-          ...(data.holdings || []),
-          {
-            id: crypto.randomUUID(),
-            symbol,
-            shares: newShares,
-            averageCost: Number(newAverageCost.toFixed(6))
-          }
-        ];
-      }
-    } else {
-      const remainingShares =
-        (Number(existingHolding?.shares) || 0) - shares;
-
-      nextHoldings =
-        remainingShares > 0
-          ? (data.holdings || []).map((holding) =>
-              holding.id === existingHolding.id
-                ? {
-                    ...holding,
-                    shares: remainingShares
-                  }
-                : holding
-            )
-          : (data.holdings || []).filter(
-              (holding) => holding.id !== existingHolding.id
-            );
-    }
-
-    transaction.holdingBefore = holdingBefore;
-
-    const nextCash = currentCash + tradePreview.cashChange;
-
+    const nextCash = currentCash + cashChange;
     setData({
       ...data,
-      settings: {
-        ...data.settings,
-        investmentCash: nextCash
-      },
+      settings: {...data.settings, investmentCash: nextCash},
       holdings: nextHoldings,
-      transactions: nextTransactions,
-      cashLedger: [
-        {
-          id: crypto.randomUUID(),
-          transactionId: transaction.id,
-          type,
-          symbol,
-          amount: tradePreview.cashChange,
-          balanceAfter: nextCash,
-          note:
-            trade.note ||
-            `${type === "buy" ? "買進" : "賣出"} ${symbol}`,
-          date: trade.date,
-          createdAt: now
-        },
-        ...(data.cashLedger || [])
-      ]
+      transactions: [transaction, ...(data.transactions || [])],
+      cashLedger: [{
+        id: crypto.randomUUID(), transactionId: transaction.id, type, symbol,
+        amount: cashChange, balanceAfter: nextCash,
+        note: trade.note || `${type} ${symbol}`, date: trade.date, createdAt: now
+      }, ...(data.cashLedger || [])]
     });
-
-    setTradeMessage(
-      type === "buy"
-        ? `已買進 ${symbol} ${shares.toLocaleString("zh-TW")} 股，現金、庫存與均價已同步更新。`
-        : `已賣出 ${symbol} ${shares.toLocaleString("zh-TW")} 股，現金與已實現損益已同步更新。`
-    );
-
-    setTrade({
-      ...trade,
-      symbol: "",
-      shares: 0,
-      price: 0,
-      note: ""
-    });
+    setTradeMessage(`交易完成：${symbol} ${shares.toLocaleString("zh-TW")} 股。`);
+    setTrade({...trade, symbol: "", shares: 0, price: 0, note: ""});
   }
 
   function undoTransaction(transactionId) {
-    const transaction = (data.transactions || []).find(
-      (item) => item.id === transactionId
-    );
-
+    const transaction = (data.transactions || []).find(item => item.id === transactionId);
     if (!transaction) return;
-
-    const nextTransactions = (data.transactions || []).filter(
-      (item) => item.id !== transactionId
-    );
-
-    let nextHoldings = [...(data.holdings || [])];
-
-    if (["buy", "sell"].includes(transaction.type)) {
-      const before = transaction.holdingBefore;
-      const currentIndex = nextHoldings.findIndex(
-        (holding) => holding.symbol === transaction.symbol
-      );
-
-      if (before) {
-        if (currentIndex >= 0) {
-          nextHoldings[currentIndex] = {
-            ...nextHoldings[currentIndex],
-            id: before.id || nextHoldings[currentIndex].id,
-            symbol: before.symbol,
-            shares: before.shares,
-            averageCost: before.averageCost
-          };
-        } else {
-          nextHoldings.push({
-            id: before.id || crypto.randomUUID(),
-            symbol: before.symbol,
-            shares: before.shares,
-            averageCost: before.averageCost
-          });
-        }
-      } else if (transaction.type === "buy" && currentIndex >= 0) {
-        const current = nextHoldings[currentIndex];
-        const remainingShares =
-          Number(current.shares || 0) -
-          Number(transaction.shares || 0);
-
-        if (remainingShares > 0) {
-          const remainingCost =
-            Number(current.shares || 0) *
-              Number(current.averageCost || 0) -
-            Number(transaction.totalCost || 0);
-
-          nextHoldings[currentIndex] = {
-            ...current,
-            shares: remainingShares,
-            averageCost: Math.max(
-              0,
-              Number((remainingCost / remainingShares).toFixed(6))
-            )
-          };
-        } else {
-          nextHoldings.splice(currentIndex, 1);
-        }
-      } else if (transaction.type === "sell") {
-        const restoredShares =
-          Number(transaction.shares || 0) +
-          (currentIndex >= 0
-            ? Number(nextHoldings[currentIndex].shares || 0)
-            : 0);
-
-        const restoredHolding = {
-          id:
-            currentIndex >= 0
-              ? nextHoldings[currentIndex].id
-              : crypto.randomUUID(),
-          symbol: transaction.symbol,
-          shares: restoredShares,
-          averageCost: Number(transaction.averageCostBefore || 0)
-        };
-
-        if (currentIndex >= 0) {
-          nextHoldings[currentIndex] = restoredHolding;
-        } else {
-          nextHoldings.push(restoredHolding);
-        }
-      }
-    }
-
-    const currentCash = Number(data.settings.investmentCash) || 0;
-    const revertedCash =
-      currentCash - Number(transaction.cashChange || 0);
-
+    const revertedCash = Number(data.settings.investmentCash || 0) - Number(transaction.cashChange || 0);
     setData({
       ...data,
-      settings: {
-        ...data.settings,
-        investmentCash: revertedCash
-      },
-      holdings: nextHoldings,
-      transactions: nextTransactions,
-      cashLedger: [
-        {
-          id: crypto.randomUUID(),
-          transactionId,
-          type: "undo",
-          amount: -Number(transaction.cashChange || 0),
-          balanceAfter: revertedCash,
-          note: `復原交易：${
-            transaction.symbol || transaction.note || transaction.type
-          }`,
-          date: new Date().toISOString().slice(0, 10),
-          createdAt: new Date().toISOString()
-        },
-        ...(data.cashLedger || [])
-      ]
+      settings: {...data.settings, investmentCash: revertedCash},
+      holdings: Array.isArray(transaction.holdingsBefore) ? transaction.holdingsBefore : data.holdings,
+      transactions: (data.transactions || []).filter(item => item.id !== transactionId),
+      cashLedger: [{
+        id: crypto.randomUUID(), transactionId, type: "undo",
+        amount: -Number(transaction.cashChange || 0), balanceAfter: revertedCash,
+        note: `復原交易：${transaction.symbol || transaction.note || transaction.type}`,
+        date: new Date().toISOString().slice(0, 10), createdAt: new Date().toISOString()
+      }, ...(data.cashLedger || [])]
     });
-
-    setTradeMessage("交易已復原，現金、庫存與均價已重新計算。");
+    setTradeMessage("交易已復原，持股與現金已回到交易前狀態。");
   }
 
   const strategy = {
@@ -1366,8 +1239,14 @@ export default function Home() {
     Number(advice.amount) > 0 &&
     data.executedTier !== advice.tier;
 
+  const marginRiskAction = Boolean(
+    computed.lowestMaintenance &&
+    computed.lowestMaintenance.maintenanceRate <=
+      Number(data.settings.maintenanceWarning || 160)
+  );
+
   const todayNeedsAction =
-    drawdownActionRequired || effectiveNeedsRebalance;
+    drawdownActionRequired || effectiveNeedsRebalance || marginRiskAction;
 
   const strategyForDecision = {
     ...cloneDefaultData().strategies,
@@ -1642,7 +1521,7 @@ export default function Home() {
       <header className="topbar">
         <div>
           <h1>Jay Invest</h1>
-          <p>V6 Wealth Assistant・Generic Balance v6.2.1</p>
+          <p>V7.5 Margin & Short Engine</p>
         </div>
         <div className="topActions">
           <button
@@ -1717,6 +1596,22 @@ export default function Home() {
                 )}
               </>
             )}
+          </div>
+        )}
+
+        {computed.lowestMaintenance && (
+          <div className={`marginRiskBanner ${
+            computed.lowestMaintenance.maintenanceRate <= Number(data.settings.maintenanceCall || 130)
+              ? "danger"
+              : computed.lowestMaintenance.maintenanceRate <= Number(data.settings.maintenanceWarning || 160)
+              ? "warning"
+              : "safe"
+          }`}>
+            <span>最低維持率</span>
+            <b>
+              {computed.lowestMaintenance.symbol}・
+              {computed.lowestMaintenance.maintenanceRate.toFixed(1)}%
+            </b>
           </div>
         )}
       </section>
@@ -1907,8 +1802,12 @@ export default function Home() {
 
         <div className="tradeTypeTabs">
           {[
-            ["buy", "買進"],
-            ["sell", "賣出"],
+            ["cash_buy", "現股買進"],
+            ["cash_sell", "現股賣出"],
+            ["margin_buy", "融資買進"],
+            ["margin_sell", "融資賣出"],
+            ["short_sell", "融券賣出"],
+            ["short_cover", "融券回補"],
             ["cash_in", "現金收入"],
             ["cash_out", "現金支出"]
           ].map(([value, label]) => (
@@ -1957,7 +1856,7 @@ export default function Home() {
           </div>
         </div>
 
-        {["buy", "sell"].includes(trade.type) ? (
+        {! ["cash_in", "cash_out"].includes(trade.type) ? (
           <>
             <div className="tradeGrid">
               <Field
@@ -2003,6 +1902,24 @@ export default function Home() {
               />
             </div>
 
+            {trade.type.startsWith("margin_") && (
+              <div className="tradeGrid leverageFields">
+                <Field label="融資成數（%）" type="number" value={trade.financingRatio}
+                  onChange={(value) => setTrade({...trade, financingRatio: Number(value)})} />
+                <Field label="融資年利率（%）" type="number" step="0.01" value={trade.financingAnnualRate}
+                  onChange={(value) => setTrade({...trade, financingAnnualRate: Number(value)})} />
+              </div>
+            )}
+
+            {trade.type.startsWith("short_") && (
+              <div className="tradeGrid leverageFields">
+                <Field label="融券保證金成數（%）" type="number" value={trade.shortMarginRatio}
+                  onChange={(value) => setTrade({...trade, shortMarginRatio: Number(value)})} />
+                <Field label="融券年費率（%）" type="number" step="0.01" value={trade.shortBorrowAnnualRate}
+                  onChange={(value) => setTrade({...trade, shortBorrowAnnualRate: Number(value)})} />
+              </div>
+            )}
+
             <div className="costPreview">
               <Row
                 label="成交金額"
@@ -2012,17 +1929,23 @@ export default function Home() {
                 label={`手續費（${data.settings.brokerageDiscount} 折）`}
                 value={money(tradePreview.fee)}
               />
-              {trade.type === "sell" && (
-                <Row
-                  label="證券交易稅"
-                  value={money(tradePreview.tax)}
-                />
+              {["cash_sell", "margin_sell", "short_sell"].includes(trade.type) && (
+                <Row label="證券交易稅" value={money(tradePreview.tax)} />
+              )}
+              {trade.type === "margin_buy" && (
+                <>
+                  <Row label="融資本金" value={money(tradePreview.financingPrincipal)} />
+                  <Row label="自備款" value={money(tradePreview.selfFunding)} />
+                </>
+              )}
+              {trade.type === "short_sell" && (
+                <Row label="融券保證金" value={money(tradePreview.shortMarginDeposit)} />
               )}
               <Row
                 label={
-                  trade.type === "buy"
-                    ? "交割扣款"
-                    : "賣出入帳"
+                  ["cash_buy", "margin_buy", "short_sell"].includes(trade.type)
+                    ? "預估扣款"
+                    : "預估入帳"
                 }
                 value={money(tradePreview.settlementAmount)}
               />
@@ -2075,13 +1998,7 @@ export default function Home() {
         </label>
 
         <button className="tradeButton" onClick={submitTransaction}>
-          {trade.type === "buy"
-            ? "完成買進並扣除現金"
-            : trade.type === "sell"
-            ? "完成賣出並加回現金"
-            : trade.type === "cash_in"
-            ? "新增現金收入"
-            : "新增現金支出"}
+          完成交易並更新現金與持股
         </button>
 
         {tradeMessage && (
@@ -2103,7 +2020,9 @@ export default function Home() {
                     id: crypto.randomUUID(),
                     symbol: "",
                     shares: 0,
-                    averageCost: 0
+                    averageCost: 0,
+                    positionType: "cash",
+                    openedAt: ""
                   }
                 ]
               }))
@@ -2119,7 +2038,12 @@ export default function Home() {
               <div>
                 <b>{holding.name || "新持股"}</b>
                 <small>
-                  {holding.symbol || "尚未填寫代號"}
+                  {holding.symbol || "尚未填寫代號"}・
+                  {holding.positionType === "margin"
+                    ? "融資"
+                    : holding.positionType === "short"
+                    ? "融券"
+                    : "現股"}
                 </small>
               </div>
               <button
@@ -2138,6 +2062,22 @@ export default function Home() {
             </div>
 
             <div className="holdingGrid">
+              <label>
+                交易方式
+                <select
+                  value={holding.positionType || "cash"}
+                  onChange={(event) => {
+                    const next = [...data.holdings];
+                    next[index] = {...next[index], positionType: event.target.value};
+                    setData({...data, holdings: next});
+                  }}
+                >
+                  <option value="cash">現股</option>
+                  <option value="margin">融資</option>
+                  <option value="short">融券</option>
+                </select>
+              </label>
+
               <label>
                 股票代號
                 <input
@@ -2243,13 +2183,12 @@ export default function Home() {
                 >
                   <div>
                     <b>
-                      {transaction.type === "buy"
-                        ? "買進"
-                        : transaction.type === "sell"
-                        ? "賣出"
-                        : transaction.type === "cash_in"
-                        ? "現金收入"
-                        : "現金支出"}
+                      {{
+                        cash_buy: "現股買進", cash_sell: "現股賣出",
+                        margin_buy: "融資買進", margin_sell: "融資賣出",
+                        short_sell: "融券賣出", short_cover: "融券回補",
+                        cash_in: "現金收入", cash_out: "現金支出"
+                      }[transaction.type] || transaction.type}
                       {transaction.symbol
                         ? `・${transaction.symbol}`
                         : ""}
@@ -2282,7 +2221,7 @@ export default function Home() {
                     >
                       {signedMoney(transaction.cashChange)}
                     </b>
-                    {transaction.type === "sell" && (
+                    {["cash_sell", "margin_sell", "short_cover"].includes(transaction.type) && (
                       <small
                         className={
                           Number(transaction.realizedPnl) >= 0
@@ -2354,8 +2293,22 @@ export default function Home() {
         />
 
         <p className="hint">
-          例如券商 2 折請填 2；若零股最低手續費為 1 元，可自行把最低手續費改成 1。
+          例如券商 2.8 折請填 2.8；最低手續費依你的實際方案設定。
         </p>
+
+        <Field label="預設融資成數（%）" type="number" value={data.settings.financingRatio}
+          onChange={(value) => setData({...data, settings:{...data.settings, financingRatio:Number(value)}})} />
+        <Field label="預設融資年利率（%）" type="number" step="0.01" value={data.settings.financingAnnualRate}
+          onChange={(value) => setData({...data, settings:{...data.settings, financingAnnualRate:Number(value)}})} />
+        <Field label="預設融券保證金成數（%）" type="number" value={data.settings.shortMarginRatio}
+          onChange={(value) => setData({...data, settings:{...data.settings, shortMarginRatio:Number(value)}})} />
+        <Field label="預設融券年費率（%）" type="number" step="0.01" value={data.settings.shortBorrowAnnualRate}
+          onChange={(value) => setData({...data, settings:{...data.settings, shortBorrowAnnualRate:Number(value)}})} />
+        <Field label="維持率注意門檻（%）" type="number" value={data.settings.maintenanceWarning}
+          onChange={(value) => setData({...data, settings:{...data.settings, maintenanceWarning:Number(value)}})} />
+        <Field label="維持率高風險門檻（%）" type="number" value={data.settings.maintenanceCall}
+          onChange={(value) => setData({...data, settings:{...data.settings, maintenanceCall:Number(value)}})} />
+        <p className="hint">維持率與追繳風險為估算值；實際規則、費率與處分條件以券商通知為準。</p>
 
         <Field
           label="保留現金（不投入股票）"

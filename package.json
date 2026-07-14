@@ -1,6 +1,6 @@
 {
-  "name": "jay-invest-v6-2-1-total-asset-fix",
-  "version": "6.2.1",
+  "name": "jay-invest-v7-5-margin-short-engine",
+  "version": "7.5.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
