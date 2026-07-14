@@ -12,9 +12,12 @@
 - [x] AI Agent contracts
 - [x] Notification Queue 資料表
 
-## Alpha 2 — Market Simulator
-- [x] 模擬今天市場
-- [x] 依持股建立測試事件
+## Alpha 2.1 — Portfolio Intelligence
+- [x] 移除寫死的 8027、1409
+- [x] 只讀取實際持有且股數大於 0 的庫存
+- [x] 持股不足時改用市場層級事件補足
+- [x] 依月份產生財報／法說／月營收事件
+- [x] 黃金與正2事件依策略開關決定是否建立
 - [x] 長期／波段／短線模式
 - [x] 自動更新 Watch Score
 - [x] 自動更新今日決策

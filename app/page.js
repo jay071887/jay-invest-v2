@@ -288,84 +288,174 @@ export default function Home() {
     if (!session?.user?.id) return;
 
     setSimulating(true);
-    setEventMessage("正在建立今天的模擬事件…");
+    setEventMessage("正在依照你的投資組合建立模擬事件…");
 
-    const holdingSymbols = (data.holdings || [])
-      .map((holding) => String(holding.symbol || "").trim())
-      .filter(Boolean);
+    const holdings = (data.holdings || [])
+      .map((holding) => ({
+        symbol: String(holding.symbol || "").trim(),
+        shares: Number(holding.shares) || 0,
+        averageCost: Number(holding.averageCost) || 0
+      }))
+      .filter((holding) => holding.symbol && holding.shares > 0);
 
-    const primarySymbol = holdingSymbols[0] || "009816";
-    const secondSymbol = holdingSymbols[1] || "8027";
-    const thirdSymbol = holdingSymbols[2] || "1409";
-    const now = new Date().toISOString();
+    const now = new Date();
+    const month = now.getMonth() + 1;
+    const nowIso = now.toISOString();
 
-    const templates = [
+    const portfolioValueBySymbol = holdings.map((holding) => {
+      const quote = (market.stocks || []).find(
+        (item) => item.symbol === holding.symbol
+      );
+      const price = Number(quote?.price) || holding.averageCost || 0;
+
+      return {
+        ...holding,
+        estimatedValue: holding.shares * price
+      };
+    });
+
+    const sortedHoldings = [...portfolioValueBySymbol].sort(
+      (a, b) => b.estimatedValue - a.estimatedValue
+    );
+
+    const activeStrategies = {
+      ...cloneDefaultData().strategies,
+      ...(data.strategies || {})
+    };
+
+    const portfolioEvents = sortedHoldings.flatMap(
+      (holding, index) => {
+        const importanceBoost = Math.max(0, 8 - index * 2);
+        const events = [];
+
+        if ([1, 4, 7, 10].includes(month)) {
+          events.push({
+            symbol: holding.symbol,
+            event_type: "earnings",
+            title: `${holding.symbol} 財報季觀察`,
+            summary:
+              "目前屬於財報季，建議關注獲利、毛利率、現金流與公司展望是否改變原本投資假設。",
+            source_name: "V5 模擬器",
+            source_type: "official",
+            score: 80 + importanceBoost,
+            confidence: 100,
+            event_time: nowIso
+          });
+        } else if ([2, 5, 8, 11].includes(month)) {
+          events.push({
+            symbol: holding.symbol,
+            event_type: "investor_conference",
+            title: `${holding.symbol} 法說與展望觀察`,
+            summary:
+              "本月常見法說與季報後續說明，重點在訂單、資本支出與未來展望。",
+            source_name: "V5 模擬器",
+            source_type: "official",
+            score: 84 + importanceBoost,
+            confidence: 100,
+            event_time: nowIso
+          });
+        } else {
+          events.push({
+            symbol: holding.symbol,
+            event_type: "monthly_revenue",
+            title: `${holding.symbol} 月營收觀察`,
+            summary:
+              "月營收屬於中高重要事件，需搭配年增率、月增率及市場預期判讀。",
+            source_name: "V5 模擬器",
+            source_type: "official",
+            score: 70 + importanceBoost,
+            confidence: 100,
+            event_time: nowIso
+          });
+        }
+
+        if (strategyMode !== "long_term") {
+          events.push({
+            symbol: holding.symbol,
+            event_type: "unusual_price",
+            title: `${holding.symbol} 盤中成交量異動`,
+            summary:
+              strategyMode === "short_term"
+                ? "短線模式提高盤中量價異動權重，建議確認是否有正式公告或籌碼變化。"
+                : "波段模式同時觀察成交量、均線與事件催化。",
+            source_name: "V5 模擬器",
+            source_type: "unknown",
+            score: strategyMode === "short_term" ? 76 : 58,
+            confidence: 65,
+            event_time: nowIso
+          });
+        }
+
+        return events;
+      }
+    );
+
+    const marketEvents = [
       {
         symbol: null,
         event_type: "material_announcement",
-        title: "美國重要總經數據即將公布",
+        title: "重要總經事件觀察",
         summary:
-          "今晚有重要總經事件，可能提高市場波動，但目前尚未觸發你的加碼條件。",
+          "國際市場有重要總經數據或央行訊息，可能提高市場波動，但目前仍需依你的既定策略判斷是否行動。",
         source_name: "V5 模擬器",
         source_type: "official",
-        score: 88,
-        confidence: 96,
-        event_time: now
+        score: 86,
+        confidence: 95,
+        event_time: nowIso
       },
       {
-        symbol: primarySymbol,
+        symbol: null,
         event_type: "industry_news",
-        title: `${primarySymbol} 相關產業出現正向消息`,
+        title: "台股整體市場風險觀察",
         summary:
-          "事件與持股產業相關，但目前資訊不足以改變原定長期策略。",
+          "本事件用於補足持股不足時的市場層級資訊，不會加入任何你未持有的股票代號。",
         source_name: "V5 模擬器",
         source_type: "reliable_media",
-        score: strategyMode === "short_term" ? 72 : 48,
+        score: strategyMode === "short_term" ? 60 : 42,
         confidence: 78,
-        event_time: now
-      },
-      {
-        symbol: secondSymbol,
-        event_type: "investor_conference",
-        title: `${secondSymbol} 即將舉行法人說明會`,
-        summary:
-          "法說會屬於高重要性事件，建議留意營運展望、接單與資本支出。",
-        source_name: "V5 模擬器",
-        source_type: "official",
-        score: 90,
-        confidence: 100,
-        event_time: now
-      },
-      {
-        symbol: thirdSymbol,
-        event_type: "monthly_revenue",
-        title: `${thirdSymbol} 公布月營收`,
-        summary:
-          "月營收屬於中高重要事件，需搭配年增率與市場預期判斷。",
-        source_name: "V5 模擬器",
-        source_type: "official",
-        score: 72,
-        confidence: 100,
-        event_time: now
-      },
-      {
-        symbol: primarySymbol,
-        event_type: "unusual_price",
-        title: `${primarySymbol} 盤中成交量明顯放大`,
-        summary:
-          "目前僅為行情異動，尚未找到正式重大公告，先提高注意即可。",
-        source_name: "V5 模擬器",
-        source_type: "unknown",
-        score: strategyMode === "short_term" ? 78 : 42,
-        confidence: 62,
-        event_time: now
+        event_time: nowIso
       }
     ];
 
-    const rows = templates.map((event) => {
+    if (activeStrategies.goldBuying) {
+      marketEvents.push({
+        symbol: "GOLD",
+        event_type: "gold",
+        title: "黃金策略觀察",
+        summary:
+          "黃金買進策略已開啟，因此保留價格與風險事件提醒。",
+        source_name: "V5 模擬器",
+        source_type: "official",
+        score: 55,
+        confidence: 90,
+        event_time: nowIso
+      });
+    }
+
+    if (activeStrategies.leveragedEtf) {
+      marketEvents.push({
+        symbol: "00685L",
+        event_type: "leveraged_etf",
+        title: "正2策略觀察",
+        summary:
+          "正2策略已開啟，模擬器才會建立相關事件；關閉時不會出現。",
+        source_name: "V5 模擬器",
+        source_type: "official",
+        score: 68,
+        confidence: 90,
+        event_time: nowIso
+      });
+    }
+
+    const rawEvents = [
+      ...portfolioEvents,
+      ...marketEvents
+    ].slice(0, Math.max(5, holdings.length * 2 + 2));
+
+    const rows = rawEvents.map((event) => {
       const impact = evaluateStrategyImpact(
         event,
-        data.strategies || {}
+        activeStrategies
       );
 
       return {
@@ -386,8 +476,11 @@ export default function Home() {
     }
 
     setEventMessage(
-      `已建立 ${rows.length} 件模擬事件，Watch Score 與今日決策已更新。`
+      holdings.length > 0
+        ? `已依照 ${holdings.length} 檔實際持股建立 ${rows.length} 件模擬事件，不會再補入未持有股票。`
+        : `目前沒有有效庫存，已建立 ${rows.length} 件市場層級模擬事件。`
     );
+
     await loadEvents(session.user.id);
     setSimulating(false);
   }
@@ -859,7 +952,7 @@ export default function Home() {
       <header className="topbar">
         <div>
           <h1>Jay Invest</h1>
-          <p>V5 Alpha 2・Market Simulator</p>
+          <p>V5 Alpha 2.1・Portfolio Intelligence</p>
         </div>
         <div className="topActions">
           <button
@@ -1008,7 +1101,7 @@ export default function Home() {
           <div>
             <h2>AI 市場模擬器</h2>
             <small>
-              產生假事件，測試 Watch Score、事件中心與今日決策。
+              只依照實際庫存與已開啟策略產生測試事件，不再補入未持有股票。
             </small>
           </div>
           <span className="modeBadge">Alpha 2</span>
@@ -1031,8 +1124,7 @@ export default function Home() {
         <div className="simulatorExplanation">
           {strategyMode === "long_term" && (
             <span>
-              長期模式會降低一般新聞與盤中異動的重要分數，
-              優先重視法說、財報與正式公告。
+              長期模式只追蹤你的實際持股，並優先重視法說、財報、月營收與正式公告。
             </span>
           )}
           {strategyMode === "swing" && (
@@ -1053,7 +1145,7 @@ export default function Home() {
             onClick={simulateTodayMarket}
             disabled={simulating}
           >
-            {simulating ? "模擬中…" : "🎲 模擬今天市場"}
+            {simulating ? "模擬中…" : "🎲 模擬我的投資組合"}
           </button>
 
           <button

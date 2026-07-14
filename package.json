@@ -1,6 +1,6 @@
 {
-  "name": "jay-invest-v5-alpha2",
-  "version": "5.0.0-alpha.2",
+  "name": "jay-invest-v5-alpha2-1-portfolio-intelligence",
+  "version": "5.0.0-alpha.2.1",
   "private": true,
   "scripts": {
     "dev": "next dev",
