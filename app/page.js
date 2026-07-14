@@ -1589,13 +1589,15 @@ export default function Home() {
     0,
     Number(data.settings.wealthGoalAmount) || 0
   );
+  const currentTotalAsset = Number(computed.totalAsset) || 0;
+
   const wealthGoalProgress =
     wealthGoalAmount > 0
-      ? Math.min(100, (computed.totalAssets / wealthGoalAmount) * 100)
+      ? Math.min(100, (currentTotalAsset / wealthGoalAmount) * 100)
       : 0;
   const wealthGoalGap = Math.max(
     0,
-    wealthGoalAmount - computed.totalAssets
+    wealthGoalAmount - currentTotalAsset
   );
   const wealthGoalDate = data.settings.wealthGoalDate
     ? new Date(`${data.settings.wealthGoalDate}T00:00:00`)
@@ -1640,7 +1642,7 @@ export default function Home() {
       <header className="topbar">
         <div>
           <h1>Jay Invest</h1>
-          <p>V6 Wealth Assistant・Generic Balance v6.2</p>
+          <p>V6 Wealth Assistant・Generic Balance v6.2.1</p>
         </div>
         <div className="topActions">
           <button
@@ -1843,7 +1845,7 @@ export default function Home() {
         <div className="goalHeadline">
           <div>
             <span>目前總資產</span>
-            <b>{money(computed.totalAssets)}</b>
+            <b>{money(currentTotalAsset)}</b>
           </div>
           <div>
             <span>財富目標</span>

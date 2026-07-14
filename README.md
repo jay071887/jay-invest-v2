@@ -57,3 +57,20 @@
 6. 開啟 Vercel Preview
 
 本版不需要新增 Supabase SQL。
+
+
+## V6.2.1 — 財富目標總資產修正
+
+V6.2 在整合通用平衡策略時，使用了較早版本的財富目標程式，
+導致總資產欄位再次讀成不存在的 `computed.totalAssets`。
+
+本版已修正為資產引擎實際使用的：
+
+`computed.totalAsset`
+
+並加入 `currentTotalAsset` 安全數值，避免資料載入期間出現：
+- 目前總資產 $0
+- 完成率 NaN%
+- 每月所需投入 $0
+
+V6.2 的通用平衡策略功能完整保留。
