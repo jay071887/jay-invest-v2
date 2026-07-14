@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
 import {
-  buildWatchScore,
   normalizeEvent
 } from "../lib/engine/eventEngine";
 import { buildDecisionSummary } from "../lib/engine/decisionEngine";
@@ -27,10 +26,6 @@ const DEFAULT_DATA = {
     goal: 3000000,
     brokerageDiscount: 2,
     minimumFee: 20,
-    recurringSymbol: "009816",
-    recurringAmount: 4000,
-    recurringDays: [7, 14, 21, 28],
-    recurringNote: "每月固定分批投入，其餘資金保留現金。",
     reserveCash: 0,
     rebalanceStockTarget: 60,
     rebalanceCashTarget: 40,
@@ -41,7 +36,7 @@ const DEFAULT_DATA = {
   cashLedger: [],
   executedTier: "",
   strategies: {
-    recurring009816: true,
+    recurring009816: false,
     marketDrawdownReminder: true,
     leveragedEtf: false,
     goldBuying: false,
@@ -106,13 +101,6 @@ const decisionActionText = (status) => {
   return "今天不需要變動";
 };
 
-const recurringDaysText = (days = []) =>
-  [...days]
-    .map(Number)
-    .filter((day) => day >= 1 && day <= 31)
-    .sort((a, b) => a - b)
-    .map((day) => `${day} 日`)
-    .join("、");
 
 function cloneDefaultData() {
   return JSON.parse(JSON.stringify(DEFAULT_DATA));
@@ -135,8 +123,6 @@ export default function Home() {
   const [assistantQuestion, setAssistantQuestion] = useState("");
   const [assistantAnswer, setAssistantAnswer] = useState("");
   const [showDecisionReasons, setShowDecisionReasons] = useState(false);
-  const [simulating, setSimulating] = useState(false);
-  const [strategyMode, setStrategyMode] = useState("long_term");
   const [newEvent, setNewEvent] = useState({
     symbol: "",
     event_type: "material_announcement",
@@ -373,138 +359,6 @@ export default function Home() {
   }
 
 
-  async function simulateTodayMarket() {
-    if (!session?.user?.id) return;
-
-    setSimulating(true);
-    setEventMessage("正在依照目前實際持股建立模擬事件…");
-
-    const holdings = (data.holdings || [])
-      .map((holding) => ({
-        symbol: String(holding.symbol || "").trim(),
-        shares: Number(holding.shares) || 0,
-        averageCost: Number(holding.averageCost) || 0
-      }))
-      .filter((holding) => holding.symbol && holding.shares > 0);
-
-    if (holdings.length === 0) {
-      setEventMessage("目前沒有有效持股，因此不建立任何模擬事件。");
-      setSimulating(false);
-      return;
-    }
-
-    const now = new Date();
-    const month = now.getMonth() + 1;
-    const nowIso = now.toISOString();
-
-    const rows = holdings.flatMap((holding, index) => {
-      const importanceBoost = Math.max(0, 8 - index * 2);
-      const events = [];
-
-      if ([1, 4, 7, 10].includes(month)) {
-        events.push({
-          user_id: session.user.id,
-          symbol: holding.symbol,
-          event_type: "earnings",
-          title: `${holding.symbol} 財報季觀察`,
-          summary:
-            "目前屬於財報季，建議關注獲利、毛利率、現金流與公司展望是否改變原本投資假設。",
-          source_name: "V5 模擬器",
-          source_type: "official",
-          score: 80 + importanceBoost,
-          confidence: 100,
-          strategy_impact: true,
-          event_time: nowIso
-        });
-      } else if ([2, 5, 8, 11].includes(month)) {
-        events.push({
-          user_id: session.user.id,
-          symbol: holding.symbol,
-          event_type: "investor_conference",
-          title: `${holding.symbol} 法說與展望觀察`,
-          summary:
-            "本月常見法說與季報後續說明，重點在訂單、資本支出與未來展望。",
-          source_name: "V5 模擬器",
-          source_type: "official",
-          score: 84 + importanceBoost,
-          confidence: 100,
-          strategy_impact: true,
-          event_time: nowIso
-        });
-      } else {
-        events.push({
-          user_id: session.user.id,
-          symbol: holding.symbol,
-          event_type: "monthly_revenue",
-          title: `${holding.symbol} 月營收觀察`,
-          summary:
-            "月營收屬於中高重要事件，需搭配年增率、月增率及市場預期判讀。",
-          source_name: "V5 模擬器",
-          source_type: "official",
-          score: 70 + importanceBoost,
-          confidence: 100,
-          strategy_impact: true,
-          event_time: nowIso
-        });
-      }
-
-      if (strategyMode !== "long_term") {
-        events.push({
-          user_id: session.user.id,
-          symbol: holding.symbol,
-          event_type: "unusual_price",
-          title: `${holding.symbol} 盤中成交量異動`,
-          summary:
-            strategyMode === "short_term"
-              ? "短線模式提高盤中量價異動權重，建議確認是否有正式公告或籌碼變化。"
-              : "波段模式同時觀察成交量、均線與事件催化。",
-          source_name: "V5 模擬器",
-          source_type: "unknown",
-          score: strategyMode === "short_term" ? 76 : 58,
-          confidence: 65,
-          strategy_impact: false,
-          event_time: nowIso
-        });
-      }
-
-      return events;
-    });
-
-    const { error } = await supabase
-      .from("events")
-      .insert(rows);
-
-    if (error) {
-      setEventMessage(`模擬失敗：${error.message}`);
-      setSimulating(false);
-      return;
-    }
-
-    setEventMessage(
-      `已依照 ${holdings.length} 檔實際持股建立 ${rows.length} 件模擬事件。`
-    );
-
-    await loadEvents(session.user.id);
-    setSimulating(false);
-  }
-
-  async function clearSimulatorEvents() {
-    if (!session?.user?.id) return;
-
-    const { error } = await supabase
-      .from("events")
-      .delete()
-      .eq("user_id", session.user.id)
-      .eq("source_name", "V5 模擬器");
-
-    if (error) {
-      setEventMessage(`清除失敗：${error.message}`);
-      return;
-    }
-
-    setEventMessage("模擬事件已清除。");
-    await loadEvents(session.user.id);
-  }
 
   async function addManualEvent() {
     if (!session?.user?.id) return;
@@ -1331,23 +1185,6 @@ export default function Home() {
     strategyForDecision
   );
 
-  const eventsBySymbol = useMemo(() => {
-    return events.reduce((map, event) => {
-      const key = event.symbol || "MARKET";
-      if (!map[key]) map[key] = [];
-      map[key].push(event);
-      return map;
-    }, {});
-  }, [events]);
-
-  const watchScores = Object.entries(eventsBySymbol)
-    .map(([symbol, symbolEvents]) => ({
-      symbol,
-      score: buildWatchScore(symbolEvents),
-      count: symbolEvents.length
-    }))
-    .sort((a, b) => b.score - a.score);
-
 
   const officialEvents = events.filter(
     (event) => event.source_type === "official"
@@ -1438,6 +1275,8 @@ export default function Home() {
       ? "今天有高重要事件，建議先查看市場分析與事件中心。"
       : aiDecisionStatus === "watch"
       ? "今天有持股事件值得留意，但目前不足以改變原策略。"
+      : events.length > 0
+      ? `今天共有 ${events.length} 件持股事件，但目前不需要改變策略。`
       : "今天沒有影響持股的重要事件，維持原策略即可。";
 
   const aiDecisionReasons = [
@@ -1568,7 +1407,7 @@ export default function Home() {
       <header className="topbar">
         <div>
           <h1>Jay Invest</h1>
-          <p>V5 AI Assistant・Core v1</p>
+          <p>V5 AI Assistant・Core v1.2</p>
         </div>
         <div className="topActions">
           <button
@@ -1684,44 +1523,6 @@ export default function Home() {
           <div className="assistantReply">
             <b>Jay AI</b>
             <p>{assistantAnswer}</p>
-          </div>
-        )}
-      </section>
-
-      <section className="card">
-        <div className="sectionHeader">
-          <div>
-            <h2>市場分析</h2>
-            <small>只整理目前實際持股的事件重要性，不追蹤黃金、正2或未持有標的。</small>
-          </div>
-          <span className="modeBadge">V5</span>
-        </div>
-
-        {watchScores.length === 0 ? (
-          <div className="empty smallEmpty">
-            尚無事件。可先在下方手動建立一筆測試事件。
-          </div>
-        ) : (
-          <div className="watchList">
-            {watchScores.slice(0, 8).map((item) => (
-              <div className="watchItem" key={item.symbol}>
-                <div>
-                  <b>{item.symbol}</b>
-                  <small>{item.count} 件事件</small>
-                </div>
-                <span
-                  className={
-                    item.score >= 80
-                      ? "score redScore"
-                      : item.score >= 50
-                      ? "score yellowScore"
-                      : "score greenScore"
-                  }
-                >
-                  {item.score}
-                </span>
-              </div>
-            ))}
           </div>
         )}
       </section>
@@ -1860,7 +1661,7 @@ export default function Home() {
                       </a>
                     ) : (
                       <span className="sourceUnavailable">
-                        模擬資料，無外部連結
+                        目前沒有外部來源連結
                       </span>
                     )}
                   </div>
@@ -1921,146 +1722,6 @@ export default function Home() {
           </div>
         )}
       </section>
-
-      <section className="card simulatorCard">
-        <div className="sectionHeader">
-          <div>
-            <h2>AI 市場模擬器</h2>
-            <small>
-              只依照目前實際持股產生測試事件，不追蹤黃金、正2或未持有標的。
-            </small>
-          </div>
-          <span className="modeBadge">Alpha 2</span>
-        </div>
-
-        <label className="modeSelector">
-          <span>模擬策略模式</span>
-          <select
-            value={strategyMode}
-            onChange={(event) =>
-              setStrategyMode(event.target.value)
-            }
-          >
-            <option value="long_term">長期投資</option>
-            <option value="swing">波段</option>
-            <option value="short_term">短線</option>
-          </select>
-        </label>
-
-        <div className="simulatorExplanation">
-          {strategyMode === "long_term" && (
-            <span>
-              長期模式只追蹤你的實際持股，並優先重視法說、財報、月營收與正式公告。
-            </span>
-          )}
-          {strategyMode === "swing" && (
-            <span>
-              波段模式會同時重視正式事件、成交量與技術面異動。
-            </span>
-          )}
-          {strategyMode === "short_term" && (
-            <span>
-              短線模式會提高盤中異動與即時新聞的關注分數。
-            </span>
-          )}
-        </div>
-
-        <div className="simulatorActions">
-          <button
-            className="tradeButton"
-            onClick={simulateTodayMarket}
-            disabled={simulating}
-          >
-            {simulating ? "模擬中…" : "🎲 模擬我的投資組合"}
-          </button>
-
-          <button
-            className="secondaryButton"
-            onClick={clearSimulatorEvents}
-            disabled={simulating}
-          >
-            清除模擬事件
-          </button>
-        </div>
-      </section>
-
-      <details className="card settings">
-        <summary>進階：手動新增事件</summary>
-        <div className="tradeGrid">
-          <Field
-            label="股票代號（可空白）"
-            value={newEvent.symbol}
-            onChange={(value) =>
-              setNewEvent({ ...newEvent, symbol: value })
-            }
-          />
-
-          <label>
-            <span>事件類型</span>
-            <select
-              value={newEvent.event_type}
-              onChange={(event) =>
-                setNewEvent({
-                  ...newEvent,
-                  event_type: event.target.value
-                })
-              }
-            >
-              <option value="material_announcement">重大訊息</option>
-              <option value="investor_conference">法說會</option>
-              <option value="earnings">財報</option>
-              <option value="monthly_revenue">月營收</option>
-              <option value="unusual_price">異常行情</option>
-              <option value="industry_news">產業新聞</option>
-              <option value="general_news">一般新聞</option>
-            </select>
-          </label>
-
-          <Field
-            label="事件標題"
-            value={newEvent.title}
-            onChange={(value) =>
-              setNewEvent({ ...newEvent, title: value })
-            }
-          />
-
-          <Field
-            label="摘要"
-            value={newEvent.summary}
-            onChange={(value) =>
-              setNewEvent({ ...newEvent, summary: value })
-            }
-          />
-
-          <Field
-            label="重要分數"
-            type="number"
-            value={newEvent.score}
-            onChange={(value) =>
-              setNewEvent({
-                ...newEvent,
-                score: Number(value)
-              })
-            }
-          />
-
-          <Field
-            label="可信度"
-            type="number"
-            value={newEvent.confidence}
-            onChange={(value) =>
-              setNewEvent({
-                ...newEvent,
-                confidence: Number(value)
-              })
-            }
-          />
-        </div>
-
-        <button className="tradeButton" onClick={addManualEvent}>
-          加入 Event Engine
-        </button>
-      </details>
 
       <section className="hero card">
         <span>總資產</span>
@@ -2779,101 +2440,6 @@ export default function Home() {
           <span className="modeBadge">穩定累積</span>
         </div>
 
-        <div className="strategyEditor">
-          <Field
-            label="定期定額標的"
-            value={data.settings.recurringSymbol}
-            onChange={(value) =>
-              setData({
-                ...data,
-                settings: {
-                  ...data.settings,
-                  recurringSymbol: value.trim()
-                }
-              })
-            }
-          />
-
-          <Field
-            label="每次投入金額"
-            type="number"
-            value={data.settings.recurringAmount}
-            onChange={(value) =>
-              setData({
-                ...data,
-                settings: {
-                  ...data.settings,
-                  recurringAmount: Number(value)
-                }
-              })
-            }
-          />
-
-          <label className="fullWidthField">
-            <span>扣款日期（用逗號分隔）</span>
-            <input
-              value={(data.settings.recurringDays || []).join(",")}
-              placeholder="例如：7,14,21,28"
-              onChange={(event) => {
-                const days = event.target.value
-                  .split(",")
-                  .map((item) => Number(item.trim()))
-                  .filter(
-                    (day) =>
-                      Number.isInteger(day) &&
-                      day >= 1 &&
-                      day <= 31
-                  );
-
-                setData({
-                  ...data,
-                  settings: {
-                    ...data.settings,
-                    recurringDays: [...new Set(days)]
-                  }
-                });
-              }}
-            />
-          </label>
-
-          <label className="fullWidthField">
-            <span>策略備註</span>
-            <textarea
-              value={data.settings.recurringNote}
-              placeholder="例如：每月固定分批投入，其餘資金保留現金。"
-              onChange={(event) =>
-                setData({
-                  ...data,
-                  settings: {
-                    ...data.settings,
-                    recurringNote: event.target.value
-                  }
-                })
-              }
-            />
-          </label>
-        </div>
-
-        <StrategyToggle
-          label={`${data.settings.recurringSymbol || "自訂標的"} 定期定額`}
-          description={
-            data.settings.recurringNote ||
-            `${recurringDaysText(data.settings.recurringDays)}，每次 ${money(
-              data.settings.recurringAmount
-            )}`
-          }
-          checked={strategy.recurring009816}
-          onChange={(checked) =>
-            setData({
-              ...data,
-              strategies: {
-                ...strategy,
-                recurring009816: checked
-              }
-            })
-          }
-        />
-
         <StrategyToggle
           label="大盤 -10% / -20% / -30% 回檔提醒"
           description="保留大盤提醒，但不等於一定要買正2"
@@ -2888,6 +2454,23 @@ export default function Home() {
             })
           }
         />
+        <StrategyToggle
+          label="正2平衡策略"
+          description="開啟後，首頁才會顯示股票／可投資現金比例與建議調節金額"
+          checked={strategy.leveragedEtf}
+          onChange={(checked) =>
+            setData({
+              ...data,
+              strategies: {
+                ...strategy,
+                leveragedEtf: checked
+              }
+            })
+          }
+        />
+
+        {strategy.leveragedEtf && (
+
 
         <div className="rebalanceSettings">
           <Field
@@ -2957,21 +2540,7 @@ export default function Home() {
             緊急預備金與黃金完全排除，不會被建議拿去加碼。
           </div>
         </div>
-
-        <StrategyToggle
-          label="正2平衡策略"
-          description="開啟後，首頁才會顯示股票／可投資現金比例與建議調節金額"
-          checked={strategy.leveragedEtf}
-          onChange={(checked) =>
-            setData({
-              ...data,
-              strategies: {
-                ...strategy,
-                leveragedEtf: checked
-              }
-            })
-          }
-        />
+        )}
 
         <StrategyToggle
           label="投資日誌"
@@ -2990,9 +2559,7 @@ export default function Home() {
 
         <div className="strategySummary">
           <b>目前策略</b>
-          <span>
-            {strategy.recurring009816
-              ? `${data.settings.recurringSymbol || "自訂標的"} 固定投入；`
+          <span> 固定投入；`
               : `${data.settings.recurringSymbol || "定期定額"} 暫停；`}
             {strategy.goldBuying
               ? "黃金買進開啟；"
@@ -3005,46 +2572,6 @@ export default function Home() {
           </span>
         </div>
       </section>
-
-      {strategy.recurring009816 && (
-      <section className="card plan">
-        <div className="sectionHeader">
-          <div>
-            <h2>
-              {data.settings.recurringSymbol || "自訂標的"} 定期定額
-            </h2>
-            <small>以下內容可在策略中心直接修改。</small>
-          </div>
-        </div>
-
-        {(data.settings.recurringDays || []).length === 0 ? (
-          <div className="empty smallEmpty">
-            尚未設定扣款日期。
-          </div>
-        ) : (
-          [...data.settings.recurringDays]
-            .sort((a, b) => a - b)
-            .map((day) => (
-              <div key={day}>
-                {day} 日　{money(data.settings.recurringAmount)}
-              </div>
-            ))
-        )}
-
-        <small className="planNote">
-          {data.settings.recurringNote ||
-            "尚未設定策略備註。"}
-        </small>
-
-        <small>
-          每月預計投入：
-          {money(
-            Number(data.settings.recurringAmount || 0) *
-              Number((data.settings.recurringDays || []).length)
-          )}
-        </small>
-      </section>
-      )}
     </main>
   );
 }
