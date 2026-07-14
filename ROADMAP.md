@@ -12,21 +12,29 @@
 - [x] AI Agent contracts
 - [x] Notification Queue 資料表
 
-## Alpha 2 — Data Connectors
+## Alpha 2 — Market Simulator
+- [x] 模擬今天市場
+- [x] 依持股建立測試事件
+- [x] 長期／波段／短線模式
+- [x] 自動更新 Watch Score
+- [x] 自動更新今日決策
+- [x] 清除模擬事件
+
+## Alpha 3 — Data Connectors
 - [ ] MOPS 重大訊息
 - [ ] 月營收與財報
 - [ ] 盤中異常行情
 - [ ] 新聞來源分級
 - [ ] 事件去重
 
-## Alpha 3 — Morning Brief
+## Alpha 4 — Morning Brief
 - [ ] 每日盤前摘要
 - [ ] 今日需要花幾分鐘
 - [ ] 證據鏈
 - [ ] AI 解釋
 - [ ] AI 報告
 
-## Alpha 4 — Notifications
+## Alpha 5 — Notifications
 - [ ] PWA
 - [ ] Web Push
 - [ ] 盤中事件排程

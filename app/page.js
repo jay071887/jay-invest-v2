@@ -70,6 +70,8 @@ export default function Home() {
   const [events, setEvents] = useState([]);
   const [eventsLoading, setEventsLoading] = useState(false);
   const [eventMessage, setEventMessage] = useState("");
+  const [simulating, setSimulating] = useState(false);
+  const [strategyMode, setStrategyMode] = useState("long_term");
   const [newEvent, setNewEvent] = useState({
     symbol: "",
     event_type: "material_announcement",
@@ -279,6 +281,133 @@ export default function Home() {
     }
 
     setEventsLoading(false);
+  }
+
+
+  async function simulateTodayMarket() {
+    if (!session?.user?.id) return;
+
+    setSimulating(true);
+    setEventMessage("正在建立今天的模擬事件…");
+
+    const holdingSymbols = (data.holdings || [])
+      .map((holding) => String(holding.symbol || "").trim())
+      .filter(Boolean);
+
+    const primarySymbol = holdingSymbols[0] || "009816";
+    const secondSymbol = holdingSymbols[1] || "8027";
+    const thirdSymbol = holdingSymbols[2] || "1409";
+    const now = new Date().toISOString();
+
+    const templates = [
+      {
+        symbol: null,
+        event_type: "material_announcement",
+        title: "美國重要總經數據即將公布",
+        summary:
+          "今晚有重要總經事件，可能提高市場波動，但目前尚未觸發你的加碼條件。",
+        source_name: "V5 模擬器",
+        source_type: "official",
+        score: 88,
+        confidence: 96,
+        event_time: now
+      },
+      {
+        symbol: primarySymbol,
+        event_type: "industry_news",
+        title: `${primarySymbol} 相關產業出現正向消息`,
+        summary:
+          "事件與持股產業相關，但目前資訊不足以改變原定長期策略。",
+        source_name: "V5 模擬器",
+        source_type: "reliable_media",
+        score: strategyMode === "short_term" ? 72 : 48,
+        confidence: 78,
+        event_time: now
+      },
+      {
+        symbol: secondSymbol,
+        event_type: "investor_conference",
+        title: `${secondSymbol} 即將舉行法人說明會`,
+        summary:
+          "法說會屬於高重要性事件，建議留意營運展望、接單與資本支出。",
+        source_name: "V5 模擬器",
+        source_type: "official",
+        score: 90,
+        confidence: 100,
+        event_time: now
+      },
+      {
+        symbol: thirdSymbol,
+        event_type: "monthly_revenue",
+        title: `${thirdSymbol} 公布月營收`,
+        summary:
+          "月營收屬於中高重要事件，需搭配年增率與市場預期判斷。",
+        source_name: "V5 模擬器",
+        source_type: "official",
+        score: 72,
+        confidence: 100,
+        event_time: now
+      },
+      {
+        symbol: primarySymbol,
+        event_type: "unusual_price",
+        title: `${primarySymbol} 盤中成交量明顯放大`,
+        summary:
+          "目前僅為行情異動，尚未找到正式重大公告，先提高注意即可。",
+        source_name: "V5 模擬器",
+        source_type: "unknown",
+        score: strategyMode === "short_term" ? 78 : 42,
+        confidence: 62,
+        event_time: now
+      }
+    ];
+
+    const rows = templates.map((event) => {
+      const impact = evaluateStrategyImpact(
+        event,
+        data.strategies || {}
+      );
+
+      return {
+        ...event,
+        user_id: session.user.id,
+        strategy_impact: impact.impactsStrategy
+      };
+    });
+
+    const { error } = await supabase
+      .from("events")
+      .insert(rows);
+
+    if (error) {
+      setEventMessage(`模擬失敗：${error.message}`);
+      setSimulating(false);
+      return;
+    }
+
+    setEventMessage(
+      `已建立 ${rows.length} 件模擬事件，Watch Score 與今日決策已更新。`
+    );
+    await loadEvents(session.user.id);
+    setSimulating(false);
+  }
+
+  async function clearSimulatorEvents() {
+    if (!session?.user?.id) return;
+
+    const { error } = await supabase
+      .from("events")
+      .delete()
+      .eq("user_id", session.user.id)
+      .eq("source_name", "V5 模擬器");
+
+    if (error) {
+      setEventMessage(`清除失敗：${error.message}`);
+      return;
+    }
+
+    setEventMessage("模擬事件已清除。");
+    await loadEvents(session.user.id);
   }
 
   async function addManualEvent() {
@@ -730,7 +859,7 @@ export default function Home() {
       <header className="topbar">
         <div>
           <h1>Jay Invest</h1>
-          <p>V5 Alpha 1・Event Engine</p>
+          <p>V5 Alpha 2・Market Simulator</p>
         </div>
         <div className="topActions">
           <button
@@ -874,8 +1003,71 @@ export default function Home() {
         )}
       </section>
 
+      <section className="card simulatorCard">
+        <div className="sectionHeader">
+          <div>
+            <h2>AI 市場模擬器</h2>
+            <small>
+              產生假事件，測試 Watch Score、事件中心與今日決策。
+            </small>
+          </div>
+          <span className="modeBadge">Alpha 2</span>
+        </div>
+
+        <label className="modeSelector">
+          <span>模擬策略模式</span>
+          <select
+            value={strategyMode}
+            onChange={(event) =>
+              setStrategyMode(event.target.value)
+            }
+          >
+            <option value="long_term">長期投資</option>
+            <option value="swing">波段</option>
+            <option value="short_term">短線</option>
+          </select>
+        </label>
+
+        <div className="simulatorExplanation">
+          {strategyMode === "long_term" && (
+            <span>
+              長期模式會降低一般新聞與盤中異動的重要分數，
+              優先重視法說、財報與正式公告。
+            </span>
+          )}
+          {strategyMode === "swing" && (
+            <span>
+              波段模式會同時重視正式事件、成交量與技術面異動。
+            </span>
+          )}
+          {strategyMode === "short_term" && (
+            <span>
+              短線模式會提高盤中異動與即時新聞的關注分數。
+            </span>
+          )}
+        </div>
+
+        <div className="simulatorActions">
+          <button
+            className="tradeButton"
+            onClick={simulateTodayMarket}
+            disabled={simulating}
+          >
+            {simulating ? "模擬中…" : "🎲 模擬今天市場"}
+          </button>
+
+          <button
+            className="secondaryButton"
+            onClick={clearSimulatorEvents}
+            disabled={simulating}
+          >
+            清除模擬事件
+          </button>
+        </div>
+      </section>
+
       <details className="card settings">
-        <summary>新增測試事件</summary>
+        <summary>進階：手動新增事件</summary>
         <div className="tradeGrid">
           <Field
             label="股票代號（可空白）"

@@ -230,3 +230,29 @@ select{
   .commandMeta{flex-wrap:wrap}
   .commandMeta .textButton{margin-left:0}
 }
+
+
+/* V5 Alpha 2 simulator */
+.simulatorCard{
+  background:linear-gradient(180deg,#17171d 0%,#121218 100%)
+}
+.modeSelector{
+  display:block;font-size:12px;color:var(--muted)
+}
+.modeSelector select{margin-top:7px}
+.simulatorExplanation{
+  margin-top:12px;padding:13px;border-radius:14px;background:#101015;
+  border:1px solid var(--line);color:var(--muted);font-size:13px;
+  line-height:1.55
+}
+.simulatorActions{
+  display:grid;grid-template-columns:1fr auto;gap:10px;margin-top:14px
+}
+.simulatorActions .tradeButton{margin-top:0}
+.secondaryButton{
+  border:1px solid var(--line);border-radius:14px;padding:12px 15px;
+  background:#101015;color:var(--muted);font-weight:750
+}
+@media(max-width:470px){
+  .simulatorActions{grid-template-columns:1fr}
+}
