@@ -132,6 +132,9 @@ export default function Home() {
   const [eventsLoading, setEventsLoading] = useState(false);
   const [eventMessage, setEventMessage] = useState("");
   const [showAllEvents, setShowAllEvents] = useState(false);
+  const [assistantQuestion, setAssistantQuestion] = useState("");
+  const [assistantAnswer, setAssistantAnswer] = useState("");
+  const [showDecisionReasons, setShowDecisionReasons] = useState(false);
   const [simulating, setSimulating] = useState(false);
   const [strategyMode, setStrategyMode] = useState("long_term");
   const [newEvent, setNewEvent] = useState({
@@ -180,7 +183,6 @@ export default function Home() {
     }
 
     loadCloudData(session.user.id);
-    loadEvents(session.user.id);
   }, [session?.user?.id]);
 
   useEffect(() => {
@@ -223,7 +225,7 @@ export default function Home() {
     }
 
     if (row?.data) {
-      setData({
+      const nextData = {
         ...cloneDefaultData(),
         ...row.data,
         settings: {
@@ -240,7 +242,10 @@ export default function Home() {
         cashLedger: Array.isArray(row.data.cashLedger)
           ? row.data.cashLedger
           : []
-      });
+      };
+
+      setData(nextData);
+      await loadEvents(userId, nextData.holdings || []);
       setCloudStatus("已從雲端同步");
     } else {
       const migrated = migrateLocalV31();
@@ -327,7 +332,7 @@ export default function Home() {
   }
 
 
-  async function loadEvents(userId) {
+  async function loadEvents(userId, holdingsOverride = null) {
     setEventsLoading(true);
 
     const { data: rows, error } = await supabase
@@ -345,7 +350,22 @@ export default function Home() {
       );
       setEvents([]);
     } else {
-      setEvents((rows || []).map(normalizeEvent));
+      const holdingSymbols = new Set(
+        (holdingsOverride || data.holdings || [])
+          .filter((holding) => Number(holding.shares) > 0)
+          .map((holding) => String(holding.symbol || "").trim())
+          .filter(Boolean)
+      );
+
+      const holdingsOnly = (rows || [])
+        .filter(
+          (event) =>
+            event.symbol &&
+            holdingSymbols.has(String(event.symbol).trim())
+        )
+        .map(normalizeEvent);
+
+      setEvents(holdingsOnly);
       setEventMessage("");
     }
 
@@ -357,7 +377,7 @@ export default function Home() {
     if (!session?.user?.id) return;
 
     setSimulating(true);
-    setEventMessage("正在依照你的投資組合建立模擬事件…");
+    setEventMessage("正在依照目前實際持股建立模擬事件…");
 
     const holdings = (data.holdings || [])
       .map((holding) => ({
@@ -367,171 +387,87 @@ export default function Home() {
       }))
       .filter((holding) => holding.symbol && holding.shares > 0);
 
+    if (holdings.length === 0) {
+      setEventMessage("目前沒有有效持股，因此不建立任何模擬事件。");
+      setSimulating(false);
+      return;
+    }
+
     const now = new Date();
     const month = now.getMonth() + 1;
     const nowIso = now.toISOString();
 
-    const portfolioValueBySymbol = holdings.map((holding) => {
-      const quote = (market.stocks || []).find(
-        (item) => item.symbol === holding.symbol
-      );
-      const price = Number(quote?.price) || holding.averageCost || 0;
+    const rows = holdings.flatMap((holding, index) => {
+      const importanceBoost = Math.max(0, 8 - index * 2);
+      const events = [];
 
-      return {
-        ...holding,
-        estimatedValue: holding.shares * price
-      };
-    });
-
-    const sortedHoldings = [...portfolioValueBySymbol].sort(
-      (a, b) => b.estimatedValue - a.estimatedValue
-    );
-
-    const activeStrategies = {
-      ...cloneDefaultData().strategies,
-      ...(data.strategies || {})
-    };
-
-    const portfolioEvents = sortedHoldings.flatMap(
-      (holding, index) => {
-        const importanceBoost = Math.max(0, 8 - index * 2);
-        const events = [];
-
-        if ([1, 4, 7, 10].includes(month)) {
-          events.push({
-            symbol: holding.symbol,
-            event_type: "earnings",
-            title: `${holding.symbol} 財報季觀察`,
-            summary:
-              "目前屬於財報季，建議關注獲利、毛利率、現金流與公司展望是否改變原本投資假設。",
-            source_name: "V5 模擬器",
-            source_type: "official",
-            score: 80 + importanceBoost,
-            confidence: 100,
-            event_time: nowIso
-          });
-        } else if ([2, 5, 8, 11].includes(month)) {
-          events.push({
-            symbol: holding.symbol,
-            event_type: "investor_conference",
-            title: `${holding.symbol} 法說與展望觀察`,
-            summary:
-              "本月常見法說與季報後續說明，重點在訂單、資本支出與未來展望。",
-            source_name: "V5 模擬器",
-            source_type: "official",
-            score: 84 + importanceBoost,
-            confidence: 100,
-            event_time: nowIso
-          });
-        } else {
-          events.push({
-            symbol: holding.symbol,
-            event_type: "monthly_revenue",
-            title: `${holding.symbol} 月營收觀察`,
-            summary:
-              "月營收屬於中高重要事件，需搭配年增率、月增率及市場預期判讀。",
-            source_name: "V5 模擬器",
-            source_type: "official",
-            score: 70 + importanceBoost,
-            confidence: 100,
-            event_time: nowIso
-          });
-        }
-
-        if (strategyMode !== "long_term") {
-          events.push({
-            symbol: holding.symbol,
-            event_type: "unusual_price",
-            title: `${holding.symbol} 盤中成交量異動`,
-            summary:
-              strategyMode === "short_term"
-                ? "短線模式提高盤中量價異動權重，建議確認是否有正式公告或籌碼變化。"
-                : "波段模式同時觀察成交量、均線與事件催化。",
-            source_name: "V5 模擬器",
-            source_type: "unknown",
-            score: strategyMode === "short_term" ? 76 : 58,
-            confidence: 65,
-            event_time: nowIso
-          });
-        }
-
-        return events;
+      if ([1, 4, 7, 10].includes(month)) {
+        events.push({
+          user_id: session.user.id,
+          symbol: holding.symbol,
+          event_type: "earnings",
+          title: `${holding.symbol} 財報季觀察`,
+          summary:
+            "目前屬於財報季，建議關注獲利、毛利率、現金流與公司展望是否改變原本投資假設。",
+          source_name: "V5 模擬器",
+          source_type: "official",
+          score: 80 + importanceBoost,
+          confidence: 100,
+          strategy_impact: true,
+          event_time: nowIso
+        });
+      } else if ([2, 5, 8, 11].includes(month)) {
+        events.push({
+          user_id: session.user.id,
+          symbol: holding.symbol,
+          event_type: "investor_conference",
+          title: `${holding.symbol} 法說與展望觀察`,
+          summary:
+            "本月常見法說與季報後續說明，重點在訂單、資本支出與未來展望。",
+          source_name: "V5 模擬器",
+          source_type: "official",
+          score: 84 + importanceBoost,
+          confidence: 100,
+          strategy_impact: true,
+          event_time: nowIso
+        });
+      } else {
+        events.push({
+          user_id: session.user.id,
+          symbol: holding.symbol,
+          event_type: "monthly_revenue",
+          title: `${holding.symbol} 月營收觀察`,
+          summary:
+            "月營收屬於中高重要事件，需搭配年增率、月增率及市場預期判讀。",
+          source_name: "V5 模擬器",
+          source_type: "official",
+          score: 70 + importanceBoost,
+          confidence: 100,
+          strategy_impact: true,
+          event_time: nowIso
+        });
       }
-    );
 
-    const marketEvents = [
-      {
-        symbol: null,
-        event_type: "material_announcement",
-        title: "重要總經事件觀察",
-        summary:
-          "國際市場有重要總經數據或央行訊息，可能提高市場波動，但目前仍需依你的既定策略判斷是否行動。",
-        source_name: "V5 模擬器",
-        source_type: "official",
-        score: 86,
-        confidence: 95,
-        event_time: nowIso
-      },
-      {
-        symbol: null,
-        event_type: "industry_news",
-        title: "台股整體市場風險觀察",
-        summary:
-          "本事件用於補足持股不足時的市場層級資訊，不會加入任何你未持有的股票代號。",
-        source_name: "V5 模擬器",
-        source_type: "reliable_media",
-        score: strategyMode === "short_term" ? 60 : 42,
-        confidence: 78,
-        event_time: nowIso
+      if (strategyMode !== "long_term") {
+        events.push({
+          user_id: session.user.id,
+          symbol: holding.symbol,
+          event_type: "unusual_price",
+          title: `${holding.symbol} 盤中成交量異動`,
+          summary:
+            strategyMode === "short_term"
+              ? "短線模式提高盤中量價異動權重，建議確認是否有正式公告或籌碼變化。"
+              : "波段模式同時觀察成交量、均線與事件催化。",
+          source_name: "V5 模擬器",
+          source_type: "unknown",
+          score: strategyMode === "short_term" ? 76 : 58,
+          confidence: 65,
+          strategy_impact: false,
+          event_time: nowIso
+        });
       }
-    ];
 
-    if (activeStrategies.goldBuying) {
-      marketEvents.push({
-        symbol: "GOLD",
-        event_type: "gold",
-        title: "黃金策略觀察",
-        summary:
-          "黃金買進策略已開啟，因此保留價格與風險事件提醒。",
-        source_name: "V5 模擬器",
-        source_type: "official",
-        score: 55,
-        confidence: 90,
-        event_time: nowIso
-      });
-    }
-
-    if (activeStrategies.leveragedEtf) {
-      marketEvents.push({
-        symbol: "00685L",
-        event_type: "leveraged_etf",
-        title: "正2策略觀察",
-        summary:
-          "正2策略已開啟，模擬器才會建立相關事件；關閉時不會出現。",
-        source_name: "V5 模擬器",
-        source_type: "official",
-        score: 68,
-        confidence: 90,
-        event_time: nowIso
-      });
-    }
-
-    const rawEvents = [
-      ...portfolioEvents,
-      ...marketEvents
-    ].slice(0, Math.max(5, holdings.length * 2 + 2));
-
-    const rows = rawEvents.map((event) => {
-      const impact = evaluateStrategyImpact(
-        event,
-        activeStrategies
-      );
-
-      return {
-        ...event,
-        user_id: session.user.id,
-        strategy_impact: impact.impactsStrategy
-      };
+      return events;
     });
 
     const { error } = await supabase
@@ -545,9 +481,7 @@ export default function Home() {
     }
 
     setEventMessage(
-      holdings.length > 0
-        ? `已依照 ${holdings.length} 檔實際持股建立 ${rows.length} 件模擬事件，不會再補入未持有股票。`
-        : `目前沒有有效庫存，已建立 ${rows.length} 件市場層級模擬事件。`
+      `已依照 ${holdings.length} 檔實際持股建立 ${rows.length} 件模擬事件。`
     );
 
     await loadEvents(session.user.id);
@@ -1471,6 +1405,152 @@ export default function Home() {
     })
     .slice(0, 3);
 
+
+  const activeHoldingSymbols = (data.holdings || [])
+    .filter((holding) => Number(holding.shares) > 0)
+    .map((holding) => String(holding.symbol || "").trim())
+    .filter(Boolean);
+
+  const topRelevantEvent = [...events]
+    .sort((a, b) => Number(b.score || 0) - Number(a.score || 0))[0];
+
+  const aiDecisionStatus = needsRebalance
+    ? "rebalance"
+    : decisionSummary.status === "red"
+    ? "review"
+    : events.some((event) => Number(event.score || 0) >= 60)
+    ? "watch"
+    : "hold";
+
+  const aiDecisionLabel =
+    aiDecisionStatus === "rebalance"
+      ? "需要調節"
+      : aiDecisionStatus === "review"
+      ? "建議重新檢視"
+      : aiDecisionStatus === "watch"
+      ? "建議關注"
+      : "不需要";
+
+  const aiOneLine =
+    aiDecisionStatus === "rebalance"
+      ? "正2平衡策略已偏離容忍區間，建議查看調節金額。"
+      : aiDecisionStatus === "review"
+      ? "今天有高重要事件，建議先查看市場分析與事件中心。"
+      : aiDecisionStatus === "watch"
+      ? "今天有持股事件值得留意，但目前不足以改變原策略。"
+      : "今天沒有影響持股的重要事件，維持原策略即可。";
+
+  const aiDecisionReasons = [
+    activeHoldingSymbols.length > 0
+      ? `目前追蹤 ${activeHoldingSymbols.length} 檔實際持股`
+      : "目前沒有有效持股",
+    events.length > 0
+      ? `今日共有 ${events.length} 件持股事件`
+      : "今日沒有新的持股事件",
+    topRelevantEvent
+      ? `最高重要事件為 ${topRelevantEvent.symbol}，分數 ${topRelevantEvent.score}`
+      : "沒有事件需要優先閱讀",
+    strategy.leveragedEtf
+      ? needsRebalance
+        ? "正2平衡策略已超出容忍區間"
+        : "正2平衡策略仍在容忍區間"
+      : "正2平衡策略未啟用",
+    `可投資現金為 ${money(investableCash)}`
+  ];
+
+  function answerAssistantQuestion() {
+    const question = assistantQuestion.trim().toLowerCase();
+
+    if (!question) {
+      setAssistantAnswer("請先輸入問題。");
+      return;
+    }
+
+    if (
+      question.includes("現金") ||
+      question.includes("資金") ||
+      question.includes("加碼")
+    ) {
+      setAssistantAnswer(
+        `目前可投資現金為 ${money(
+          investableCash
+        )}。緊急預備金不會被列入投資或加碼資金。${
+          investableCash <= 0
+            ? "目前不建議新增部位。"
+            : "新增交易前可先查看 Cash Engine 的交易後餘額預估。"
+        }`
+      );
+      return;
+    }
+
+    if (
+      question.includes("變動") ||
+      question.includes("操作") ||
+      question.includes("今天")
+    ) {
+      setAssistantAnswer(
+        `今天的結論是「${aiDecisionLabel}」。${aiOneLine}`
+      );
+      return;
+    }
+
+    if (
+      question.includes("哪一檔") ||
+      question.includes("重要") ||
+      question.includes("事件")
+    ) {
+      setAssistantAnswer(
+        topRelevantEvent
+          ? `目前最值得先看的是 ${topRelevantEvent.symbol}：${topRelevantEvent.title}，事件重要分數 ${topRelevantEvent.score}。`
+          : "目前沒有新的持股事件需要優先查看。"
+      );
+      return;
+    }
+
+    if (
+      question.includes("比例") ||
+      question.includes("平衡") ||
+      question.includes("正2")
+    ) {
+      setAssistantAnswer(
+        strategy.leveragedEtf
+          ? `目前股票比例 ${currentStockRatio.toFixed(
+              1
+            )}%，可投資現金比例 ${currentCashRatio.toFixed(
+              1
+            )}%。目標為 ${stockTarget.toFixed(
+              0
+            )}/${cashTarget.toFixed(0)}，${
+              needsRebalance
+                ? `建議調節約 ${money(Math.abs(rebalanceAmount))}。`
+                : "目前仍在容忍區間內。"
+            }`
+          : "正2平衡策略目前未啟用，因此不產生調節建議。"
+      );
+      return;
+    }
+
+    if (
+      question.includes("風險") ||
+      question.includes("利空") ||
+      question.includes("新聞")
+    ) {
+      const highRisk = events.filter(
+        (event) => Number(event.score || 0) >= 80
+      );
+      setAssistantAnswer(
+        highRisk.length > 0
+          ? `目前有 ${highRisk.length} 件高重要持股事件，建議查看事件中心。`
+          : "目前沒有偵測到高重要持股事件。"
+      );
+      return;
+    }
+
+    setAssistantAnswer(
+      `目前結論是「${aiDecisionLabel}」。你也可以問：今天需要變動嗎、可投資現金多少、哪一檔最重要、正2是否需要平衡。`
+    );
+  }
+
   if (authLoading) {
     return (
       <main className="center">
@@ -1488,7 +1568,7 @@ export default function Home() {
       <header className="topbar">
         <div>
           <h1>Jay Invest</h1>
-          <p>V5 Alpha 3.5・Conditional Rebalance</p>
+          <p>V5 AI Assistant・Core v1</p>
         </div>
         <div className="topActions">
           <button
@@ -1513,102 +1593,106 @@ export default function Home() {
       </div>
 
       <section
-        className={`card simpleDecision ${
-          needsRebalance ? "yellow" : decisionSummary.status
-        }`}
+        className={`card aiAssistantCard ${aiDecisionStatus}`}
       >
-        <span className="eyebrow">今天需要變動？</span>
-
-        <div className="simpleDecisionAnswer">
-          <span
-            className={`decisionDot ${
-              needsRebalance ? "yellow" : decisionSummary.status
-            }`}
-          />
-          <strong>
-            {needsRebalance
-              ? "需要調節"
-              : decisionSummary.status === "red"
-              ? "建議重新檢視"
-              : "不需要"}
-          </strong>
+        <div className="aiAssistantTop">
+          <div>
+            <span className="eyebrow">Jay AI Assistant</span>
+            <h2>今天需要變動？</h2>
+          </div>
+          <span className={`assistantStatus ${aiDecisionStatus}`}>
+            {aiDecisionLabel}
+          </span>
         </div>
 
+        <div className="assistantDecision">
+          <span
+            className={`decisionDot ${
+              aiDecisionStatus === "hold"
+                ? "green"
+                : aiDecisionStatus === "watch" ||
+                  aiDecisionStatus === "rebalance"
+                ? "yellow"
+                : "red"
+            }`}
+          />
+          <strong>{aiDecisionLabel}</strong>
+        </div>
+
+        <p className="assistantOneLine">{aiOneLine}</p>
+
         {strategy.leveragedEtf && (
-          <div className="rebalanceDecision">
-            <div className="rebalanceHeadline">
-              <div>
-                <span>正2平衡策略</span>
-                <b>
-                  目標股票 {stockTarget.toFixed(0)}%／現金{" "}
-                  {cashTarget.toFixed(0)}%
-                </b>
-              </div>
-              <span
-                className={
-                  needsRebalance
-                    ? "rebalanceBadge warning"
-                    : "rebalanceBadge normal"
-                }
-              >
-                {needsRebalance ? "需要平衡" : "配置正常"}
-              </span>
+          <div className="assistantRebalance">
+            <div>
+              <span>正2平衡</span>
+              <b>
+                目前 {currentStockRatio.toFixed(1)}%／
+                {currentCashRatio.toFixed(1)}%
+              </b>
             </div>
-
-            <div className="rebalanceRatios">
-              <div>
-                <span>目前股票</span>
-                <b>{currentStockRatio.toFixed(1)}%</b>
-              </div>
-              <div>
-                <span>目前可投資現金</span>
-                <b>{currentCashRatio.toFixed(1)}%</b>
-              </div>
-              <div>
-                <span>容忍區間</span>
-                <b>±{rebalanceTolerance.toFixed(1)}%</b>
-              </div>
+            <div>
+              <span>目標</span>
+              <b>
+                {stockTarget.toFixed(0)}%／{cashTarget.toFixed(0)}%
+              </b>
             </div>
-
-            {needsRebalance ? (
-              <div className="rebalanceAction">
-                <b>
-                  {rebalanceDirection === "reduce_stock"
-                    ? `建議股票部位減少約 ${money(
-                        Math.abs(rebalanceAmount)
-                      )}`
-                    : `建議股票部位增加約 ${money(
-                        Math.abs(rebalanceAmount)
-                      )}`}
-                </b>
-                <span>
-                  此金額是恢復至目標比例的估算，不會自動替你下單。
-                  緊急預備金與黃金不納入這項平衡計算。
-                </span>
-              </div>
-            ) : (
-              <div className="rebalanceAction normal">
-                <b>目前不需要調節</b>
-                <span>
-                  股票與可投資現金仍在你設定的容忍範圍內。
-                </span>
-              </div>
-            )}
+            <div>
+              <span>建議調節</span>
+              <b>
+                {needsRebalance
+                  ? money(Math.abs(rebalanceAmount))
+                  : money(0)}
+              </b>
+            </div>
           </div>
         )}
 
-        {!strategy.leveragedEtf && (
-          <small className="decisionMuted">
-            正2平衡策略目前關閉，因此不顯示調節金額。
-          </small>
+        <button
+          className="whyButton"
+          onClick={() =>
+            setShowDecisionReasons(!showDecisionReasons)
+          }
+        >
+          {showDecisionReasons ? "收合原因" : "為什麼？"}
+        </button>
+
+        {showDecisionReasons && (
+          <div className="assistantReasons">
+            {aiDecisionReasons.map((reason, index) => (
+              <span key={index}>✓ {reason}</span>
+            ))}
+          </div>
+        )}
+
+        <div className="assistantAsk">
+          <input
+            value={assistantQuestion}
+            placeholder="詢問 Jay AI，例如：今天適合加碼嗎？"
+            onChange={(event) =>
+              setAssistantQuestion(event.target.value)
+            }
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                answerAssistantQuestion();
+              }
+            }}
+          />
+          <button onClick={answerAssistantQuestion}>詢問</button>
+        </div>
+
+        {assistantAnswer && (
+          <div className="assistantReply">
+            <b>Jay AI</b>
+            <p>{assistantAnswer}</p>
+          </div>
         )}
       </section>
 
       <section className="card">
         <div className="sectionHeader">
           <div>
-            <h2>Watch Score</h2>
-            <small>分數代表今天值不值得花時間關注，不是買賣評分。</small>
+            <h2>市場分析</h2>
+            <small>只整理目前實際持股的事件重要性，不追蹤黃金、正2或未持有標的。</small>
           </div>
           <span className="modeBadge">V5</span>
         </div>
@@ -1843,7 +1927,7 @@ export default function Home() {
           <div>
             <h2>AI 市場模擬器</h2>
             <small>
-              只依照實際庫存與已開啟策略產生測試事件，不再補入未持有股票。
+              只依照目前實際持股產生測試事件，不追蹤黃金、正2或未持有標的。
             </small>
           </div>
           <span className="modeBadge">Alpha 2</span>
@@ -2884,36 +2968,6 @@ export default function Home() {
               strategies: {
                 ...strategy,
                 leveragedEtf: checked
-              }
-            })
-          }
-        />
-
-        <StrategyToggle
-          label="黃金持續買進"
-          description="目前關閉；維持既有 2.1 兩，不主動新增"
-          checked={strategy.goldBuying}
-          onChange={(checked) =>
-            setData({
-              ...data,
-              strategies: {
-                ...strategy,
-                goldBuying: checked
-              }
-            })
-          }
-        />
-
-        <StrategyToggle
-          label="緊急預備金管理"
-          description="維持 20～30 萬安全緩衝"
-          checked={strategy.emergencyFund}
-          onChange={(checked) =>
-            setData({
-              ...data,
-              strategies: {
-                ...strategy,
-                emergencyFund: checked
               }
             })
           }
